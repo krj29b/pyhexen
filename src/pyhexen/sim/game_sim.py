@@ -12,11 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.events import EventBus
 from pyhexen.core.random import Random
+from pyhexen.core.ticcmd import TicCmd
 from pyhexen.sim.map import MapCheckState
+from pyhexen.sim.specials.anim import SurfaceAnimator
 from pyhexen.sim.thinker import ThinkerList
 
 if TYPE_CHECKING:
     from pyhexen.sim.mobj import Mobj
+    from pyhexen.sim.player import Player
     from pyhexen.world.level import Level, Line, MapThing
 
 
@@ -48,8 +51,11 @@ class GameSim:
         self.deathmatch: bool = deathmatch
         self.nomonsters: bool = nomonsters
         self.tid_map: dict[int, list[Mobj]] = {}
+        self.tagged_lines: dict[int, list[Line]] = {}
         self.player_starts: dict[tuple[int, int], MapThing] = {}
         self.deathmatch_starts: list[MapThing] = []
+        self.players: list[Player] = []
+        self.surface_animator: SurfaceAnimator = SurfaceAnimator()
         self.map_state: MapCheckState = MapCheckState()
         self.activated_lines: list[tuple[Line, Mobj | None, int]] = []
         self.line_activation_callback: Callable[[Line, Mobj | None, int], bool] | None = None
@@ -57,29 +63,52 @@ class GameSim:
         self.timer_game: int = 0
         self.paused: bool = False
 
+    def setup_level_specials(self) -> None:
+        """Port of P_SpawnSpecials (p_spec.c)."""
+        from pyhexen.sim.specials.sector_specials import p_spawn_specials
+
+        p_spawn_specials(self)
+
     def find_mobjs_by_tid(self, tid: int) -> list[Mobj]:
         """Return all active (non-removed) `Mobj`s registered with `tid`."""
         if tid == 0:
             return []
         return [m for m in self.tid_map.get(tid, ()) if not m.removed]
 
-    def on_line_activated(self, line: Line, mobj: Mobj | None, spac: int) -> bool:
+    def on_line_activated(
+        self,
+        line: Line,
+        mobj: Mobj | None,
+        spac: int,
+        *,
+        side: int = 0,
+    ) -> bool:
         """Hook invoked when `line` is crossed, pushed, used, or impacted by `mobj`."""
+        from pyhexen.sim.line_activation import p_activate_line
+
         self.activated_lines.append((line, mobj, spac))
         if self.line_activation_callback is not None:
             return self.line_activation_callback(line, mobj, spac)
-        return True
+        return p_activate_line(self, line, mobj, side, spac)
 
     def tick(self, cmds: Sequence[Any] = ()) -> None:
         """Port of P_Ticker (p_tick.c). Advances the simulation by one tic (35 Hz)."""
-        _ = cmds  # Player command consumption wired in T6.4
+        from pyhexen.sim.player import p_player_think
+        from pyhexen.sim.specials.anim import p_animate_surfaces
+
         if self.paused:
             return
 
         if self.timer_game > 0:
             self.timer_game -= 1
 
+        for idx, player in enumerate(self.players):
+            if idx < len(cmds) and isinstance(cmds[idx], TicCmd):
+                player.cmd = cmds[idx]
+            p_player_think(self, player)
+
         self.thinkers.run_all(self)
+        p_animate_surfaces(self)
         self.level_time += 1
 
     def state_hash(self) -> str:

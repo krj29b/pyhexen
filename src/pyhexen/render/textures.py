@@ -462,9 +462,9 @@ class WorldShaderProgram:
         self.set_lighting()
 
     def set_camera(self, view: np.ndarray, proj: np.ndarray) -> None:
-        """Update view and projection matrices (4x4 float32 column-major bytes)."""
-        self.program["u_view"].write(np.ascontiguousarray(view, dtype=np.float32).tobytes())
-        self.program["u_proj"].write(np.ascontiguousarray(proj, dtype=np.float32).tobytes())
+        """Update view and projection matrices (converts row-major 4x4 numpy to GL column-major)."""
+        self.program["u_view"].write(np.ascontiguousarray(view.T, dtype=np.float32).tobytes())
+        self.program["u_proj"].write(np.ascontiguousarray(proj.T, dtype=np.float32).tobytes())
 
     def set_lighting(
         self,
@@ -474,13 +474,16 @@ class WorldShaderProgram:
         fixed_colormap: int = -1,
         use_fogmap: bool = False,
         gamma: float = 1.0,
+        alpha: float = 1.0,
     ) -> None:
-        """Configure palette flash index, extralight, fixedcolormap, fogmap, and gamma."""
+        """Configure palette flash index, extralight, fixedcolormap, fogmap, gamma, and alpha."""
         self.program["u_palette_index"].value = int(palette_index)
         self.program["u_extralight"].value = int(extralight)
         self.program["u_fixed_colormap"].value = int(fixed_colormap)
         self.program["u_use_fogmap"].value = 1 if use_fogmap else 0
         self.program["u_gamma"].value = float(gamma)
+        if "u_alpha" in self.program:
+            self.program["u_alpha"].value = float(alpha)
 
     def bind_surface_texture(
         self,

@@ -131,6 +131,13 @@ class RenderContext:
         if not self.standalone:
             pygame.display.flip()
 
+    def read_pixels(self) -> np.ndarray:
+        """Read the current framebuffer as a top-down (height, width, 4) uint8 RGBA array."""
+        target = self._fbo if self._fbo is not None else self.ctx.screen
+        raw = target.read(components=4)
+        arr = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 4))
+        return np.flipud(arr).copy()
+
     def render_test_triangle(self, *, read_pixels: bool = False) -> np.ndarray | None:
         """Render a colored test triangle and optionally return the RGBA framebuffer array."""
         prog = self.ctx.program(
@@ -165,10 +172,7 @@ class RenderContext:
             vao.render(moderngl.TRIANGLES)
             if not read_pixels:
                 return None
-            target = self._fbo if self._fbo is not None else self.ctx.screen
-            raw = target.read(components=4)
-            arr = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 4))
-            return np.flipud(arr).copy()
+            return self.read_pixels()
         finally:
             vao.release()
             vbo.release()

@@ -200,6 +200,11 @@ def p_z_movement(sim: GameSim, mo: Mobj) -> None:
 
     Port of P_ZMovement (p_mobj.c).
     """
+    # Check for smooth step up
+    if mo.player is not None and mo.z < mo.floorz:
+        mo.player.viewheight -= mo.floorz - mo.z
+        mo.player.deltaviewheight = ((48 * FRACUNIT) - mo.player.viewheight) >> 3
+
     mo.z += mo.momz
 
     if (mo.flags & MobjFlag.MF_FLOAT) and mo.target is not None:
@@ -220,6 +225,8 @@ def p_z_movement(sim: GameSim, mo: Mobj) -> None:
                 return
 
         if mo.momz < 0:
+            if mo.player is not None and mo.momz < -GRAVITY * 8:
+                mo.player.deltaviewheight = mo.momz >> 3
             mo.momz = 0
         mo.z = mo.floorz
 

@@ -57,6 +57,16 @@ class _MutableFrame:
         self.flip: list[bool] = [False] * 8
 
 
+def _is_valid_sprite_lump_name(name: str) -> bool:
+    if len(name) not in (6, 8):
+        return False
+    if not ("A" <= name[4] <= "Z" and "0" <= name[5] <= "8"):
+        return False
+    if len(name) == 8 and not ("A" <= name[6] <= "Z" and "0" <= name[7] <= "8"):
+        return False
+    return True
+
+
 def _parse_frame_and_rotation(
     lump_name: str,
     frame_char: str,
@@ -135,7 +145,7 @@ class SpriteRegistry:
             names_list = [normalize_lump_name(n)[:4] for n in SPRNAMES]
             seen = set(names_list)
             for lump in lumps:
-                if len(lump.name) >= 6:
+                if _is_valid_sprite_lump_name(lump.name):
                     prefix = lump.name[:4]
                     if prefix not in seen:
                         seen.add(prefix)
@@ -143,14 +153,11 @@ class SpriteRegistry:
         else:
             names_list = [normalize_lump_name(n)[:4] for n in sprite_names]
 
-        # Group sprite lumps by 4-char prefix for O(1) per-sprite scanning
+        # Group valid sprite lumps by 4-char prefix for O(1) per-sprite scanning
         by_prefix: dict[str, list[LumpInfo]] = {}
         for lump in lumps:
-            if len(lump.name) < 6:
-                raise ValueError(
-                    f"R_InitSprites: Sprite lump name {lump.name!r} is shorter than 6 characters"
-                )
-            by_prefix.setdefault(lump.name[:4], []).append(lump)
+            if _is_valid_sprite_lump_name(lump.name):
+                by_prefix.setdefault(lump.name[:4], []).append(lump)
 
         self._sprites: list[SpriteDef] = []
         self._by_name: dict[str, int] = {}

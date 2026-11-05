@@ -21,6 +21,7 @@ uniform int u_extralight;
 uniform int u_fixed_colormap;
 uniform int u_use_fogmap;
 uniform float u_gamma;
+uniform float u_alpha;
 
 out vec4 f_color;
 
@@ -30,6 +31,9 @@ out vec4 f_color;
 int compute_colormap_row(float light_level, float depth, float surface_type) {
     if (u_fixed_colormap >= 0) {
         return clamp(u_fixed_colormap, 0, 31);
+    }
+    if (light_level > 255.5) {
+        return 0;
     }
     int lightnum = clamp((int(light_level) >> 4) + u_extralight, 0, 15);
     int startmap = (15 - lightnum) * 4;
@@ -90,5 +94,6 @@ void main() {
         rgb = pow(rgb, vec3(1.0 / u_gamma));
     }
 
-    f_color = vec4(rgb, 1.0);
+    float out_alpha = (u_alpha > 0.0) ? u_alpha : 1.0;
+    f_color = vec4(rgb, out_alpha);
 }

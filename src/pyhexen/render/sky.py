@@ -34,13 +34,28 @@ _SHADERS_DIR = Path(__file__).resolve().parent / "shaders"
 
 def _is_sky_sector(sector: Any, sky_flat_num: int) -> bool:
     """Return True if the sector has a sky ceiling or indoor lightning special."""
-    ceiling_pic = getattr(sector, "ceilingpic", None)
-    if ceiling_pic is not None and sky_flat_num >= 0 and ceiling_pic == sky_flat_num:
+    ceiling_pic = getattr(sector, "ceilingpic", getattr(sector, "ceiling_pic", None))
+    if isinstance(ceiling_pic, int) and sky_flat_num >= 0 and ceiling_pic == sky_flat_num:
+        return True
+    if isinstance(ceiling_pic, str) and ceiling_pic.upper().startswith("F_SKY"):
         return True
     ceiling_name = getattr(sector, "ceiling_flat", None)
-    if isinstance(ceiling_name, str) and ceiling_name.upper() == "F_SKY":
+    if isinstance(ceiling_name, str) and ceiling_name.upper().startswith("F_SKY"):
         return True
     return False
+
+
+def _get_sector_light(sector: Any) -> int:
+    if hasattr(sector, "light_level"):
+        return int(sector.light_level)
+    return int(getattr(sector, "lightlevel", 0))
+
+
+def _set_sector_light(sector: Any, value: int) -> None:
+    if hasattr(sector, "light_level"):
+        sector.light_level = int(value)
+    else:
+        sector.lightlevel = int(value)
 
 
 @dataclass(slots=True)
@@ -55,6 +70,11 @@ class LightningState:
     sky_flat_num: int = -1
     saved_sector_lights: list[int] = field(default_factory=list)
     active_sector_mask: list[bool] = field(default_factory=list)
+
+    @property
+    def light_flash(self) -> int:
+        """Alias for flash_light when flash_count > 0, else 0."""
+        return self.flash_light if self.flash_count > 0 else 0
 
     def init(self, enabled: bool, rng: Random | None = None, sky_flat_num: int = -1) -> None:
         """Port of P_InitLightning (p_anim.c)."""
@@ -107,7 +127,7 @@ class LightningState:
 
         if sectors is not None:
             for sec in sectors:
-                light = int(getattr(sec, "lightlevel", 0))
+                light = _get_sector_light(sec)
                 special = int(getattr(sec, "special", 0))
                 is_sky = _is_sky_sector(sec, self.sky_flat_num)
                 self.saved_sector_lights.append(light)
@@ -125,7 +145,7 @@ class LightningState:
                         new_light = self.flash_light
 
                     if new_light >= light:
-                        sec.lightlevel = new_light
+                        _set_sector_light(sec, new_light)
                         self.active_sector_mask.append(True)
                         found_sector = True
                     else:
@@ -172,16 +192,16 @@ class LightningState:
                     for i, sec in enumerate(sectors):
                         if i < len(self.active_sector_mask) and self.active_sector_mask[i]:
                             saved = self.saved_sector_lights[i]
-                            cur = int(getattr(sec, "lightlevel", saved))
+                            cur = _get_sector_light(sec)
                             if cur > saved + 4:
-                                sec.lightlevel = cur - 4
+                                _set_sector_light(sec, cur - 4)
                 return True
 
             # Flash ended: restore sector light levels and revert to sky1
             if sectors is not None:
                 for i, sec in enumerate(sectors):
                     if i < len(self.active_sector_mask) and self.active_sector_mask[i]:
-                        sec.lightlevel = self.saved_sector_lights[i]
+                        _set_sector_light(sec, self.saved_sector_lights[i])
             self.use_sky2 = False
             return False
 
@@ -348,6 +368,7 @@ class SkyRenderer:
         gamma: float = 1.0,
         use_sky2_override: bool | None = None,
         vertices: int = -1,
+        first: int = 0,
     ) -> None:
         """Render sky geometry using the configured single or double sky layers."""
         if self.sky1_tex is None:
@@ -358,8 +379,8 @@ class SkyRenderer:
         sky2.index_tex.use(location=1)
         tex_mgr.palette_tex.use(location=2)
 
-        self.program["u_view"].write(np.ascontiguousarray(view, dtype=np.float32).tobytes())
-        self.program["u_proj"].write(np.ascontiguousarray(proj, dtype=np.float32).tobytes())
+        self.program["u_view"].write(np.ascontiguousarray(view.T, dtype=np.float32).tobytes())
+        self.program["u_proj"].write(np.ascontiguousarray(proj.T, dtype=np.float32).tobytes())
         self.program["u_camera_yaw"].value = float(camera_yaw)
         self.program["u_fov_x"].value = float(fov_x)
         self.program["u_pitch_offset"].value = float(pitch_offset)
@@ -372,7 +393,7 @@ class SkyRenderer:
         self.program["u_palette_index"].value = int(palette_index)
         self.program["u_gamma"].value = float(gamma)
 
-        vao.render(mode=moderngl.TRIANGLES, vertices=vertices)
+        vao.render(mode=moderngl.TRIANGLES, vertices=vertices, first=first)
 
     def render_fullscreen_quad(
         self,

@@ -50,7 +50,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests", "."]
 markers = [
     "wad: tests requiring a user-supplied HEXEN.WAD IWAD",
     "gl: tests requiring an OpenGL context",

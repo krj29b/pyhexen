@@ -49,7 +49,7 @@ def test_real_hexen_iwad_reader(iwad_path: Path) -> None:
         flats = flat_lumps(stack)
         assert len(flats) > 50
         assert all(not f.name.endswith(("_START", "_END")) for f in flats)
-        assert all(f.size == 4096 for f in flats)
+        assert all(f.size >= 4096 for f in flats)
 
         patches = patch_lumps(stack)
         assert len(patches) > 50

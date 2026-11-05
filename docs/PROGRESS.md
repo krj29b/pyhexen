@@ -6,8 +6,8 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 
 | ID | Task | Deps | Status | Notes |
 |---|---|---|---|---|
-| T0.1 | Repository scaffold | – | IN PROGRESS (lead/2026-11-05) | |
-| T0.2 | Reference source fetch | T0.1 | TODO | |
+| T0.1 | Repository scaffold | – | DONE | Package structure, pyproject.toml, GPL-2.0 LICENSE, .gitignore, config.example.toml, version CLI + tests |
+| T0.2 | Reference source fetch | T0.1 | IN PROGRESS (lead/2026-11-05) | |
 | T0.3 | Config & IWAD discovery | T0.1 | TODO | |
 | T0.4 | CI | T0.1 | TODO | |
 | T0.5 | Synthetic WAD builder | T0.1 | TODO | |

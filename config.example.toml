@@ -1,0 +1,26 @@
+# PyHexen configuration example
+# Copy to config.toml and adjust paths/settings.
+
+# Path to HEXEN.WAD (can also be set via --iwad or PYHEXEN_IWAD environment variable)
+iwad = ""
+
+[video]
+width = 1280
+height = 800
+fullscreen = false
+vsync = true
+fov = 90.0
+authentic_aspect = true
+authentic_lowres = false
+true_pitch = false
+smooth_filter = false
+
+[audio]
+sfx_volume = 0.8
+music_volume = 0.7
+music_backend = "pygame"
+soundfont = ""
+
+[controls]
+mouse_sensitivity = 1.0
+invert_mouse = false

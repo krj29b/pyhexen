@@ -36,6 +36,20 @@ class DoorType(IntEnum):
 
 VDOORWAIT = 150  # tics to stay open (4.2 seconds)
 
+KEY_NAMES: tuple[str, ...] = (
+    "STEEL KEY",
+    "CAVE KEY",
+    "AXE KEY",
+    "FIRE KEY",
+    "EMERALD KEY",
+    "DUNGEON KEY",
+    "SILVER KEY",
+    "RUSTED KEY",
+    "HORN KEY",
+    "SWAMP KEY",
+    "CASTLE KEY",
+)
+
 
 class VerticalDoor(Thinker):
     """Port of vldoor_t and T_VerticalDoor (p_doors.c)."""
@@ -74,6 +88,9 @@ class VerticalDoor(Thinker):
             if res == MoveResult.RES_PASTDEST:
                 if self.type == DoorType.DREV_OPEN:
                     self.removed = True
+                    if self.sector is not None:
+                        self.sector.special_data = None
+                        sim.tag_finished(self.sector.tag)
                 else:
                     self.direction = 0
                     self.topcountdown = self.topwait
@@ -90,6 +107,9 @@ class VerticalDoor(Thinker):
             )
             if res == MoveResult.RES_PASTDEST:
                 self.removed = True
+                if self.sector is not None:
+                    self.sector.special_data = None
+                    sim.tag_finished(self.sector.tag)
             elif res == MoveResult.RES_CRUSHED:
                 # Bounce back open on obstruction
                 self.direction = 1
@@ -112,6 +132,7 @@ def ev_do_door(
     if tag == 0 and line is not None and line.back_sector is not None:
         sec = line.back_sector
         door = VerticalDoor(sec, type_, speed, topwait=topwait)
+        sec.special_data = door
         sim.thinkers.add(door)
         return True
 
@@ -120,6 +141,7 @@ def ev_do_door(
         return False
     for sec in sectors:
         door = VerticalDoor(sec, type_, speed, topwait=topwait)
+        sec.special_data = door
         sim.thinkers.add(door)
     return True
 

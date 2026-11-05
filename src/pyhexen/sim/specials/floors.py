@@ -136,6 +136,9 @@ class FloorMove(Thinker):
         )
         if res == MoveResult.RES_PASTDEST:
             self.removed = True
+            if self.sector is not None:
+                self.sector.special_data = None
+                sim.tag_finished(self.sector.tag)
 
 
 class FloorWaggle(Thinker):
@@ -177,6 +180,7 @@ def ev_do_floor(
     for sec in sectors:
         dest = sec.floor_height + direction * height if height > 0 else height
         mover = FloorMove(sec, speed, dest, direction, crush)
+        sec.special_data = mover
         sim.thinkers.add(mover)
     return True
 

@@ -65,6 +65,9 @@ class Plat(Thinker):
                     self.count = self.wait
                 else:
                     self.removed = True
+                    if self.sector is not None:
+                        self.sector.special_data = None
+                        sim.tag_finished(self.sector.tag)
         else:
             self.count -= 1
             if self.count <= 0:
@@ -82,6 +85,7 @@ def special_plat_down_wait_up_stay(
     for sec in sectors:
         low = find_lowest_floor_surrounding(sec)
         plat = Plat(sec, (speed_byte * FRACUNIT) >> 3, low=low, high=sec.floor_height)
+        sec.special_data = plat
         sim.thinkers.add(plat)
     return True
 

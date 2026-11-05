@@ -72,6 +72,9 @@ class Pillar(Thinker):
 
         if self.floor_done and self.ceiling_done:
             self.removed = True
+            if self.sector is not None:
+                self.sector.special_data = None
+                sim.tag_finished(self.sector.tag)
 
 
 def special_pillar_build(
@@ -86,6 +89,7 @@ def special_pillar_build(
     for sec in sectors:
         mid = (sec.floor_height + sec.ceiling_height) // 2
         pillar = Pillar(sec, speed, floordest=mid, ceilingdest=mid)
+        sec.special_data = pillar
         sim.thinkers.add(pillar)
     return True
 

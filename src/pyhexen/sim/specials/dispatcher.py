@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.angles import ANG90
-from pyhexen.core.events import MapExit, SectorChanged
+from pyhexen.core.events import MapExit, PrintMessage, SectorChanged, SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, MAXINT
 from pyhexen.sim.info_data import MobjFlag2
 from pyhexen.sim.mobj import Mobj, remove_mobj
@@ -428,6 +428,91 @@ def _ev_teleport_end_game(
     else:
         sim.events.emit(MapExit(next_map=-1, position=-1))
     return True
+
+
+@line_special(80, "ACS_Execute")
+def _ev_acs_execute(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None,
+    mo: Mobj | None,
+    side: int = 0,
+) -> bool:
+    script_num, target_map, arg1, arg2, arg3 = args
+    if target_map != 0 and target_map != getattr(sim, "map_num", 1):
+        return sim.acs_store.queue_script(target_map, script_num, (arg1, arg2, arg3))
+    if sim.acs_vm is None:
+        return False
+    res = sim.acs_vm.start_script(
+        script_num,
+        args=(arg1, arg2, arg3),
+        activator=mo,
+        line=line,
+        side=side,
+        sim=sim,
+    )
+    return res is not None
+
+
+@line_special(81, "ACS_Suspend")
+def _ev_acs_suspend(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+) -> bool:
+    script_num, target_map = args[0], args[1]
+    if target_map != 0 and target_map != getattr(sim, "map_num", 1):
+        return False
+    if sim.acs_vm is None:
+        return False
+    return sim.acs_vm.suspend_script(script_num)
+
+
+@line_special(82, "ACS_Terminate")
+def _ev_acs_terminate(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+) -> bool:
+    script_num, target_map = args[0], args[1]
+    if target_map != 0 and target_map != getattr(sim, "map_num", 1):
+        return False
+    if sim.acs_vm is None:
+        return False
+    return sim.acs_vm.terminate_script(script_num, sim=sim)
+
+
+@line_special(83, "ACS_LockedExecute")
+def _ev_acs_locked_execute(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None,
+    mo: Mobj | None,
+    side: int = 0,
+) -> bool:
+    from pyhexen.sim.specials.doors import KEY_NAMES
+
+    script_num, target_map, arg1, arg2, lock = args
+    if mo is None or mo.player is None:
+        return False
+    if lock != 0:
+        key_bit = 1 << (lock - 1)
+        if not (mo.player.keys & key_bit):
+            key_name = KEY_NAMES[lock - 1] if 0 <= lock - 1 < len(KEY_NAMES) else f"KEY {lock}"
+            sim.events.emit(PrintMessage(text=f"YOU NEED THE {key_name}\n", bold=True))
+            sim.events.emit(SoundEvent(sound_id="DoorLocked", volume=127))
+            return False
+    if target_map != 0 and target_map != getattr(sim, "map_num", 1):
+        return sim.acs_store.queue_script(target_map, script_num, (arg1, arg2, 0))
+    if sim.acs_vm is None:
+        return False
+    res = sim.acs_vm.start_script(
+        script_num,
+        args=(arg1, arg2, 0),
+        activator=mo,
+        line=line,
+        side=side,
+        sim=sim,
+    )
+    return res is not None
 
 
 @line_special(109, "Light_ForceLightning")

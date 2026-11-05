@@ -59,6 +59,9 @@ class CeilingMove(Thinker):
                 self.direction = -self.direction
             else:
                 self.removed = True
+                if self.sector is not None:
+                    self.sector.special_data = None
+                    sim.tag_finished(self.sector.tag)
         elif res == MoveResult.RES_CRUSHED:
             if self.repeat:
                 self.direction = 1  # Reverse on crush
@@ -80,6 +83,7 @@ def special_ceiling_lower_by_value(
             bottomheight=sec.ceiling_height - height_byte * FRACUNIT,
             direction=-1,
         )
+        sec.special_data = c
         sim.thinkers.add(c)
     return True
 
@@ -100,6 +104,7 @@ def special_ceiling_raise_by_value(
             bottomheight=sec.ceiling_height,
             direction=1,
         )
+        sec.special_data = c
         sim.thinkers.add(c)
     return True
 
@@ -122,6 +127,7 @@ def special_ceiling_crush_and_raise(
             crush=crush or 1,
             repeat=True,
         )
+        sec.special_data = c
         sim.thinkers.add(c)
     return True
 

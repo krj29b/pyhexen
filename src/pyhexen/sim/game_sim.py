@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 from pyhexen.core.events import EventBus
 from pyhexen.core.random import Random
 from pyhexen.core.ticcmd import TicCmd
+from pyhexen.sim.acs.store import ACSStore
+from pyhexen.sim.acs.vm import ACSVM
 from pyhexen.sim.map import MapCheckState
 from pyhexen.sim.specials.anim import SurfaceAnimator
 from pyhexen.sim.thinker import ThinkerList
@@ -63,11 +65,42 @@ class GameSim:
         self.timer_game: int = 0
         self.paused: bool = False
 
+        self.map_num: int = 1
+        if self.level is not None and getattr(self.level, "name", "").startswith("MAP"):
+            try:
+                self.map_num = int(self.level.name[3:])
+            except ValueError:
+                self.map_num = 1
+
+        self.acs_store: ACSStore = ACSStore()
+        self.acs_vm: ACSVM | None = None
+        if self.level is not None and getattr(self.level, "behavior_bytes", b""):
+            from pyhexen.sim.acs.loader import parse_behavior
+
+            try:
+                behavior = parse_behavior(self.level.behavior_bytes)
+                self.acs_vm = ACSVM(behavior)
+            except Exception:
+                self.acs_vm = None
+
     def setup_level_specials(self) -> None:
         """Port of P_SpawnSpecials (p_spec.c)."""
         from pyhexen.sim.specials.sector_specials import p_spawn_specials
 
         p_spawn_specials(self)
+        if self.acs_vm is not None:
+            self.acs_store.run_pending_for_map(self.map_num, self)
+            self.acs_vm.start_open_scripts(self)
+
+    def tag_finished(self, tag: int) -> None:
+        """Port of P_TagFinished (p_acs.c)."""
+        if self.acs_vm is not None:
+            self.acs_vm.tag_finished(tag, self)
+
+    def poly_finished(self, po: int) -> None:
+        """Port of P_PolyobjFinished (p_acs.c)."""
+        if self.acs_vm is not None:
+            self.acs_vm.poly_finished(po, self)
 
     def find_mobjs_by_tid(self, tid: int) -> list[Mobj]:
         """Return all active (non-removed) `Mobj`s registered with `tid`."""

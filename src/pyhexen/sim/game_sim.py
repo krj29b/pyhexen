@@ -7,12 +7,17 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.events import EventBus
 from pyhexen.core.random import Random
+from pyhexen.sim.map import MapCheckState
 from pyhexen.sim.thinker import ThinkerList
+
+if TYPE_CHECKING:
+    from pyhexen.sim.mobj import Mobj
+    from pyhexen.world.level import Level, Line, MapThing
 
 
 class GameSim:
@@ -26,15 +31,44 @@ class GameSim:
         *,
         rng: Random | None = None,
         events: EventBus | None = None,
-        level: Any = None,
+        level: Level | None = None,
+        skill: int = 2,
+        player_class: int = 0,
+        netgame: bool = False,
+        deathmatch: bool = False,
+        nomonsters: bool = False,
     ) -> None:
         self.rng: Random = rng if rng is not None else Random()
         self.events: EventBus = events if events is not None else EventBus()
         self.thinkers: ThinkerList = ThinkerList()
-        self.level: Any = level
+        self.level: Level | None = level
+        self.skill: int = skill
+        self.player_class: int = player_class
+        self.netgame: bool = netgame
+        self.deathmatch: bool = deathmatch
+        self.nomonsters: bool = nomonsters
+        self.tid_map: dict[int, list[Mobj]] = {}
+        self.player_starts: dict[tuple[int, int], MapThing] = {}
+        self.deathmatch_starts: list[MapThing] = []
+        self.map_state: MapCheckState = MapCheckState()
+        self.activated_lines: list[tuple[Line, Mobj | None, int]] = []
+        self.line_activation_callback: Callable[[Line, Mobj | None, int], bool] | None = None
         self.level_time: int = 0
         self.timer_game: int = 0
         self.paused: bool = False
+
+    def find_mobjs_by_tid(self, tid: int) -> list[Mobj]:
+        """Return all active (non-removed) `Mobj`s registered with `tid`."""
+        if tid == 0:
+            return []
+        return [m for m in self.tid_map.get(tid, ()) if not m.removed]
+
+    def on_line_activated(self, line: Line, mobj: Mobj | None, spac: int) -> bool:
+        """Hook invoked when `line` is crossed, pushed, used, or impacted by `mobj`."""
+        self.activated_lines.append((line, mobj, spac))
+        if self.line_activation_callback is not None:
+            return self.line_activation_callback(line, mobj, spac)
+        return True
 
     def tick(self, cmds: Sequence[Any] = ()) -> None:
         """Port of P_Ticker (p_tick.c). Advances the simulation by one tic (35 Hz)."""
@@ -59,9 +93,9 @@ class GameSim:
         if self.level is not None and hasattr(self.level, "sectors"):
             sector_tuples = tuple(
                 (
-                    getattr(s, "floorheight", 0),
-                    getattr(s, "ceilingheight", 0),
-                    getattr(s, "lightlevel", 0),
+                    getattr(s, "floor_height", getattr(s, "floorheight", 0)),
+                    getattr(s, "ceiling_height", getattr(s, "ceilingheight", 0)),
+                    getattr(s, "light_level", getattr(s, "lightlevel", 0)),
                 )
                 for s in self.level.sectors
             )

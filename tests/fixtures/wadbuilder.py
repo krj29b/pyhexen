@@ -686,13 +686,11 @@ class MapBuilder:
         ld_l_left = self.add_linedef(v_bl, v_tl, sd_l_left, flags=ML_BLOCKING)
 
         # Shared portal line (v_tm -> v_bm: front=sec1 on right/west, back=sec2 on left/east)
-        upper_tex = wall_tex if ceil1 != ceil2 else "-"
-        lower_tex = wall_tex if floor1 != floor2 else "-"
         sd_portal_front = self.add_sidedef(
-            sec1, toptexture=upper_tex, bottomtexture=lower_tex, midtexture="-"
+            sec1, toptexture=wall_tex, bottomtexture=wall_tex, midtexture="-"
         )
         sd_portal_back = self.add_sidedef(
-            sec2, toptexture=upper_tex, bottomtexture=lower_tex, midtexture="-"
+            sec2, toptexture=wall_tex, bottomtexture=wall_tex, midtexture="-"
         )
         ld_portal = self.add_linedef(
             v_tm,

@@ -22,38 +22,38 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T2.5 | Sprite frame registry | T2.2 | DONE | `wad/sprites.py` (`SpriteRegistry` using `SPRNAMES`, rotation 0 and mirrored 8-char lump names) |
 | T2.6 | Scanner & MAPINFO | T1.4 | DONE | `wad/scanner.py` (`sc_man.c` port) and `wad/mapinfo.py` (`MapInfo`, `MapInfoTable`, merges `SNDINFO` `$map` songs) |
 | T2.7 | SNDINFO, SNDSEQ, ANIMDEFS | T2.6 | DONE | `wad/sndinfo.py`, `wad/sndseq.py` (`SeqOpcode` instructions), `wad/animdefs.py` (`flat`/`texture` pic & rand frames) |
-| T2.8 | wadinfo CLI | T2.1–T2.7 | IN PROGRESS (agent-lumps/2026-11-05) | M1 part 1 |
+| T2.8 | wadinfo CLI | T2.1–T2.7 | DONE | `tools/wadinfo.py` (`list`, `extract`, `export-png`, `maps`) — M1 part 1 |
 | T3.1 | Map lump parsers | T1.4 | DONE | `wad/maplumps.py` (structured numpy dtypes; rejects Doom maps missing `BEHAVIOR` with `MapFormatError`) |
 | T3.2 | Level construction | T3.1, T1.1 | DONE | `world/level.py` (`Level`, `Sector`, `Line`, `Side`, `Seg`, `Subsector`, `Node`, `MapThing`, `P_GroupLines`) |
 | T3.3 | BSP & blockmap | T3.2 | DONE | `world/bsp.py`, `world/blockmap.py` (`valid_count` deduplication), `world/reject.py` |
-| T3.4 | 2D map viewer | T3.2, T2.6 | IN PROGRESS (agent-lumps/2026-11-05) | **M1** |
+| T3.4 | 2D map viewer | T3.2, T2.6 | DONE | `tools/mapview2d.py` (colour-coded lines/things, pan/zoom, hover tooltips, headless surface export) — **M1 complete** |
 | T4.1 | GL bootstrap & main loop | T0.3 | DONE | `render/context.py` (windowed + headless `standalone=True`), `render/camera.py` (y-shearing & true-pitch), `app/main_loop.py` (35 Hz accumulator) |
-| T4.2 | GPU texture manager | T4.1, T2.1, T2.3, T2.4 | IN PROGRESS (agent-math/2026-11-05) | |
-| T4.3 | Wall mesh builder | T4.2, T3.2 | IN PROGRESS (agent-wad/2026-11-05) | |
-| T4.4 | Flat mesh builder | T4.2, T3.3 | IN PROGRESS (agent-wad/2026-11-05) | |
-| T4.5 | Palette/light shader | T4.2 | IN PROGRESS (agent-math/2026-11-05) | |
-| T4.6 | Sky | T4.5, T2.6 | IN PROGRESS (agent-math/2026-11-05) | |
-| T4.7 | Sector chunks & dynamic rebuild | T4.3, T4.4 | IN PROGRESS (agent-wad/2026-11-05) | |
-| T4.8 | Fly mode & screenshots | T4.6, T4.7 | TODO | **M2** |
+| T4.2 | GPU texture manager | T4.1, T2.1, T2.3, T2.4 | DONE | `render/textures.py` (`GpuTextureManager`, `R8` index + mask textures, `ANIMDEFS` translation tables) |
+| T4.3 | Wall mesh builder | T4.2, T3.2 | DONE | `render/mesh_walls.py` (upper/mid/lower/masked pegging, offsets, `F_SKY` sky hack) |
+| T4.4 | Flat mesh builder | T4.2, T3.3 | DONE | `render/mesh_flats.py` (loop tracing + `mapbox_earcut` with holes, BSP-clip fallback) |
+| T4.5 | Palette/light shader | T4.2 | DONE | `render/shaders/world.vert/.frag` (wall `scalelight` & flat `zlight` curves, fogmap, palette flash, gamma) |
+| T4.6 | Sky | T4.5, T2.6 | DONE | `render/sky.py` & `render/shaders/sky.vert/.frag` (single & double sky, scrolling, `LightningState`) |
+| T4.7 | Sector chunks & dynamic rebuild | T4.3, T4.4 | DONE | `render/chunks.py` (`ChunkManager` with cached 2D flat triangulation, ~0.05 ms/sector dirty rebuild) |
+| T4.8 | Fly mode & screenshots | T4.6, T4.7 | IN PROGRESS (agent-math/2026-11-05) | **M2** |
 | T5.1 | Info table generator | T0.2 | DONE | `tools/gen_info.py` -> `sim/info_data.py` (300 sprites, 2846 states, 398 mobjs), `@action` registry (`sim/actions/__init__.py`), `tools/report_actions.py` (226 unique actions) |
 | T5.2 | Thinkers & ticker | T5.1 | DONE | `core/events.py`, `sim/thinker.py` (circular doubly-linked list + deferred removal), `sim/game_sim.py` (`tick`, `state_hash`) |
-| T5.3 | Map objects | T5.2, T3.3 | IN PROGRESS (agent-sim/2026-11-05) | |
-| T5.4 | Map thing spawning | T5.3 | IN PROGRESS (agent-sim/2026-11-05) | |
-| T5.5 | Sprite rendering | T5.3, T2.5, T4.5 | TODO | |
+| T5.3 | Map objects | T5.2, T3.3 | DONE | `sim/mobj.py` (`Mobj`, `spawn_mobj`, `set_mobj_state` zero-tic loop, `remove_mobj`, sector/blockmap/TID linking) |
+| T5.4 | Map thing spawning | T5.3 | DONE | `sim/mobj.py` (`spawn_map_thing`, `spawn_map_things` with skill/class/mode filters, dormant/ambush, player starts) |
+| T5.5 | Sprite rendering | T5.3, T2.5, T4.5 | IN PROGRESS (agent-math/2026-11-05) | |
 | T6.1 | Input → TicCmd | T4.1 | DONE | `core/ticcmd.py` (`TicCmd`, `pack_lookfly`/`unpack_lookfly`) and `app/input.py` (`G_BuildTiccmd` port) |
-| T6.2 | Map utilities | T3.3, T1.2 | IN PROGRESS (agent-sim/2026-11-05) | |
-| T6.3 | Collision & movement | T6.2, T5.3 | IN PROGRESS (agent-sim/2026-11-05) | |
-| T6.4 | Player thinker | T6.3, T6.1 | TODO | |
-| T6.5 | Line activation | T6.3 | TODO | |
-| T7.1 | Special dispatcher | T6.5 | TODO | |
-| T7.2 | Doors | T7.1 | TODO | |
-| T7.3 | Floors & stairs | T7.1 | TODO | |
-| T7.4 | Ceilings & crushers | T7.1 | TODO | |
-| T7.5 | Plats & pillars | T7.1 | TODO | |
-| T7.6 | Lights | T7.1 | TODO | |
-| T7.7 | Teleports & thing specials | T7.1 | TODO | |
-| T7.8 | Switches, animations, scrolling | T7.1, T4.2 | TODO | |
-| T7.9 | Sector specials | T7.1 | TODO | **M3** |
+| T6.2 | Map utilities | T3.3, T1.2 | DONE | `sim/maputl.py` (`point_on_line_side`, `box_on_line_side`, `line_opening`, `intercept_vector`, `path_traverse`) |
+| T6.3 | Collision & movement | T6.2, T5.3 | DONE | `sim/map.py` & `sim/movement.py` (`check_position`, `try_move`, `slide_move`, `p_xy_movement`, `p_z_movement`) |
+| T6.4 | Player thinker | T6.3, T6.1 | IN PROGRESS (agent-sim/2026-11-05) | |
+| T6.5 | Line activation | T6.3 | IN PROGRESS (agent-sim/2026-11-05) | |
+| T7.1 | Special dispatcher | T6.5 | IN PROGRESS (agent-sim/2026-11-05) | |
+| T7.2 | Doors | T7.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T7.3 | Floors & stairs | T7.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T7.4 | Ceilings & crushers | T7.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T7.5 | Plats & pillars | T7.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T7.6 | Lights | T7.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T7.7 | Teleports & thing specials | T7.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T7.8 | Switches, animations, scrolling | T7.1, T4.2 | IN PROGRESS (agent-sim/2026-11-05) | |
+| T7.9 | Sector specials | T7.1 | IN PROGRESS (agent-sim/2026-11-05) | **M3** |
 | T8.1 | BEHAVIOR loader | T3.1 | DONE | `sim/acs/loader.py` (`parse_behavior`, `OPEN_SCRIPTS_BASE = 1000`, string table) |
 | T8.2 | ACS VM core | T8.1, T5.2 | TODO | |
 | T8.3 | ACS game pcodes | T8.2, T7.1 | TODO | |
@@ -75,13 +75,13 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T10.10 | Items & inventory | T10.1 | TODO | |
 | T10.11 | Environment actors | T10.1 | TODO | **M4** when all of P10 done |
 | T11.1 | SFX decode | T1.4 | DONE | `audio/sfx.py` (`decode_dmx_sfx`, 16B lead-in/out pad handling, resampling, `SfxCache`) |
-| T11.2 | Sound system | T11.1, T2.7, T5.3 | TODO | |
-| T11.3 | Sound sequences | T11.2 | IN PROGRESS (agent-lumps/2026-11-05) | |
+| T11.2 | Sound system | T11.1, T2.7, T5.3 | IN PROGRESS (agent-lumps/2026-11-05) | |
+| T11.3 | Sound sequences | T11.2 | DONE | `audio/sndseq_player.py` (`SoundSequencePlayer`, all `SeqOpcode`s, level override & wind things) |
 | T11.4 | MUS→MIDI | T1.4 | DONE | `audio/mus2mid.py` (`mus_to_midi` Format 0 MIDI converter validated with `mido`) |
-| T11.5 | Music backend | T11.4, T2.6 | IN PROGRESS (agent-lumps/2026-11-05) | |
-| T12.1 | Fonts & 2D overlay | T4.2 | TODO | |
+| T11.5 | Music backend | T11.4, T2.6 | DONE | `audio/music.py` (`MusicManager`, `PygameMidiBackend`, `FluidSynthBackend`, `NullMusicBackend`) |
+| T12.1 | Fonts & 2D overlay | T4.2 | IN PROGRESS (agent-lumps/2026-11-05) | |
 | T12.2 | Status bar & inventory bar | T12.1, T10.10 | TODO | |
-| T12.3 | Messages | T12.1 | TODO | |
+| T12.3 | Messages | T12.1 | IN PROGRESS (agent-lumps/2026-11-05) | |
 | T12.4 | Menus | T12.1 | TODO | |
 | T12.5 | Automap | T12.1, T3.2 | TODO | |
 | T12.6 | Intermission & finale | T12.1 | TODO | |

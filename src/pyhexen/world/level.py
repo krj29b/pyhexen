@@ -132,6 +132,7 @@ class Line:
     bbox: tuple[int, int, int, int]
     valid_count: int = 0
     special_data: Any = None
+    is_polyobj: bool = False
 
 
 @dataclass(slots=True)
@@ -205,6 +206,13 @@ class Level:
     blockmap: Blockmap
     reject: RejectMatrix
     behavior_bytes: bytes
+    polyobjs: dict[int, Any] = field(default_factory=dict)
+    polyobjs_by_index: list[Any] = field(default_factory=list)
+
+    @property
+    def polyobjs_by_tag(self) -> dict[int, Any]:
+        """Convenience property matching tag lookup."""
+        return self.polyobjs
 
     def point_in_subsector(self, x: int, y: int) -> Subsector:
         """Port of R_PointInSubsector (r_main.c)."""
@@ -463,7 +471,7 @@ def build_level_from_raw(raw: RawMapLumps) -> Level:
     bsp = BSP(nodes=nodes, subsectors=subsectors)
     reject = RejectMatrix(data=raw.reject, num_sectors=len(sectors))
 
-    return Level(
+    level = Level(
         name=raw.name,
         vertexes=vertexes,
         sectors=sectors,
@@ -478,6 +486,12 @@ def build_level_from_raw(raw: RawMapLumps) -> Level:
         reject=reject,
         behavior_bytes=raw.behavior,
     )
+
+    from pyhexen.sim.polyobj import init_polyobjs
+
+    init_polyobjs(level)
+
+    return level
 
 
 def load_level(wad: WadStack | WadFile, map_name: str) -> Level:

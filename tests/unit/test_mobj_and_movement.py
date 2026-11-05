@@ -229,8 +229,10 @@ def test_spawn_map_things_filters_and_tids(tmp_path) -> None:
     mb.add_thing(x=64, y=64, type=1, flags=0x07E7, args=(0, 0, 0, 0, 0))
     # Deathmatch start (type 11)
     mb.add_thing(x=96, y=64, type=11, flags=0x07E7)
-    # Polyobj anchor (type 3000) - deferred
-    mb.add_thing(x=128, y=64, type=3000, flags=0x07E7)
+    # Polyobj box (types 3000 anchor and 3001 spawn spot) - deferred
+    mb.add_polyobject_box(
+        99, anchor_x=-2000, anchor_y=-2000, spawn_x=128, spawn_y=64, width=32, height=32
+    )
 
     # Fighter + Easy only Ettin with TID=10, Ambush
     mb.add_thing(

@@ -94,7 +94,9 @@ def synthetic_m1_wad(tmp_path: Path) -> Path:
     )
     mb.add_thing(x=64, y=128, type=1, angle=0)  # Player 1 start
     mb.add_thing(x=384, y=128, type=31, angle=180)  # Monster
-    mb.add_thing(x=128, y=64, type=3000, angle=90)  # Polyobj anchor
+    mb.add_polyobject_box(
+        90, anchor_x=-2000, anchor_y=-2000, spawn_x=128, spawn_y=64, width=32, height=32
+    )
     mb.add_thing(x=192, y=192, type=122, angle=45)  # Item
     wb.add_map(mb)
 
@@ -243,7 +245,8 @@ def test_mapview2d_transforms_and_classification(synthetic_m1_wad: Path) -> None
     assert classify_thing_category(level.things[0])[0] == "player"
     assert classify_thing_category(level.things[1])[0] == "monster"
     assert classify_thing_category(level.things[2])[0] == "polyobj"
-    assert classify_thing_category(level.things[3])[0] == "item"
+    assert classify_thing_category(level.things[3])[0] == "polyobj"
+    assert classify_thing_category(level.things[4])[0] == "item"
 
 
 def test_mapview2d_pick_element_and_headless_render(synthetic_m1_wad: Path, tmp_path: Path) -> None:

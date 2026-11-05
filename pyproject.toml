@@ -44,6 +44,7 @@ packages = ["src/pyhexen"]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests", "tools"]
+extend-exclude = [".agents"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

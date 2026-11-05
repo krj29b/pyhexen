@@ -356,6 +356,151 @@ def execute_line_special(
     return False
 
 
+# Polyobject line specials (po_man.c, p_spec.c)
+
+
+@line_special(1, "Polyobj_StartLine")
+def _ev_poly_start_line(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 1 (p_spec.c:513). Initialization special; no-op at runtime."""
+    _ = (sim, args, line)
+    return False
+
+
+@line_special(2, "Polyobj_RotateLeft")
+def _ev_poly_rotate_left(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 2 (p_spec.c:516)."""
+    from pyhexen.sim.polyobj import ev_rotate_poly
+
+    return ev_rotate_poly(sim, line, args, direction=1, override=False)
+
+
+@line_special(3, "Polyobj_RotateRight")
+def _ev_poly_rotate_right(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 3 (p_spec.c:519)."""
+    from pyhexen.sim.polyobj import ev_rotate_poly
+
+    return ev_rotate_poly(sim, line, args, direction=-1, override=False)
+
+
+@line_special(4, "Polyobj_Move")
+def _ev_poly_move(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 4 (p_spec.c:522)."""
+    from pyhexen.sim.polyobj import ev_move_poly
+
+    return ev_move_poly(sim, line, args, times_eight=False, override=False)
+
+
+@line_special(5, "Polyobj_ExplicitLine")
+def _ev_poly_explicit_line(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 5 (p_spec.c:524). Initialization special; no-op at runtime."""
+    _ = (sim, args, line)
+    return False
+
+
+@line_special(6, "Polyobj_MoveTimes8")
+def _ev_poly_move_times8(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 6 (p_spec.c:527)."""
+    from pyhexen.sim.polyobj import ev_move_poly
+
+    return ev_move_poly(sim, line, args, times_eight=True, override=False)
+
+
+@line_special(7, "Polyobj_DoorSwing")
+def _ev_poly_door_swing(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 7 (p_spec.c:530)."""
+    from pyhexen.sim.polyobj import PolyDoorType, ev_open_poly_door
+
+    return ev_open_poly_door(sim, line, args, PolyDoorType.PODOOR_SWING)
+
+
+@line_special(8, "Polyobj_DoorSlide")
+def _ev_poly_door_slide(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 8 (p_spec.c:533)."""
+    from pyhexen.sim.polyobj import PolyDoorType, ev_open_poly_door
+
+    return ev_open_poly_door(sim, line, args, PolyDoorType.PODOOR_SLIDE)
+
+
+@line_special(90, "Polyobj_OR_RotateLeft")
+def _ev_poly_or_rotate_left(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 90 (p_spec.c:741)."""
+    from pyhexen.sim.polyobj import ev_rotate_poly
+
+    return ev_rotate_poly(sim, line, args, direction=1, override=True)
+
+
+@line_special(91, "Polyobj_OR_RotateRight")
+def _ev_poly_or_rotate_right(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 91 (p_spec.c:744)."""
+    from pyhexen.sim.polyobj import ev_rotate_poly
+
+    return ev_rotate_poly(sim, line, args, direction=-1, override=True)
+
+
+@line_special(92, "Polyobj_OR_Move")
+def _ev_poly_or_move(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 92 (p_spec.c:747)."""
+    from pyhexen.sim.polyobj import ev_move_poly
+
+    return ev_move_poly(sim, line, args, times_eight=False, override=True)
+
+
+@line_special(93, "Polyobj_OR_MoveTimes8")
+def _ev_poly_or_move_times8(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None = None,
+) -> bool:
+    """Port of Special 93 (p_spec.c:750)."""
+    from pyhexen.sim.polyobj import ev_move_poly
+
+    return ev_move_poly(sim, line, args, times_eight=True, override=True)
+
+
 # Built-in miscellaneous line specials in p_spec.c
 
 

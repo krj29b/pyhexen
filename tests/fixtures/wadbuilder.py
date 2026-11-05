@@ -620,6 +620,98 @@ class MapBuilder:
         self.add_subsector(4, first_seg, bbox=bbox)
         return sec_idx
 
+    def add_polyobject_box(
+        self,
+        tag: int,
+        anchor_x: int,
+        anchor_y: int,
+        spawn_x: int,
+        spawn_y: int,
+        *,
+        width: int = 64,
+        height: int = 64,
+        crush: bool = False,
+        method: str = "start_line",
+        mirror_tag: int = 0,
+        seq_type: int = 0,
+        floor_height: int = 0,
+        ceiling_height: int = 128,
+        floor_pic: str = "FLOOR01",
+        ceiling_pic: str = "CEIL01",
+        wall_tex: str = "WALL01",
+        dummy_sector_idx: int | None = None,
+    ) -> tuple[int, list[int], int]:
+        """Add a synthetic polyobject rectangular box.
+
+        Constructs a holding sector (or reuses `dummy_sector_idx`), 4 vertices,
+        4 linedefs (using either StartLine special 1 or ExplicitLine special 5),
+        4 segs, 1 subsector in the dummy area, an anchor spot thing (type 3000),
+        and a spawn spot thing (type 3001 or 3002).
+
+        Returns `(sector_index, linedef_indices, subsector_index)`.
+        """
+        sec_idx = (
+            dummy_sector_idx
+            if dummy_sector_idx is not None
+            else self.add_sector(
+                floor_height=floor_height,
+                ceiling_height=ceiling_height,
+                floor_pic=floor_pic,
+                ceiling_pic=ceiling_pic,
+                light=160,
+            )
+        )
+        w2 = width // 2
+        h2 = height // 2
+        v_tl = self.add_vertex(anchor_x - w2, anchor_y + h2)
+        v_tr = self.add_vertex(anchor_x + w2, anchor_y + h2)
+        v_br = self.add_vertex(anchor_x + w2, anchor_y - h2)
+        v_bl = self.add_vertex(anchor_x - w2, anchor_y - h2)
+
+        edges = [
+            (v_tl, v_tr, 0x0000),  # Top edge: East
+            (v_tr, v_br, 0xC000),  # Right edge: South
+            (v_br, v_bl, 0x8000),  # Bottom edge: West
+            (v_bl, v_tl, 0x4000),  # Left edge: North
+        ]
+        first_seg = len(self.segs)
+        line_indices: list[int] = []
+
+        for i, (v1, v2, bam_angle) in enumerate(edges):
+            if method == "start_line":
+                sp = 1 if i == 0 else 0
+                args = (tag, mirror_tag, seq_type, 0, 0) if i == 0 else (0, 0, 0, 0, 0)
+            elif method == "explicit":
+                sp = 5
+                args = (
+                    tag,
+                    i + 1,
+                    mirror_tag if i == 0 else 0,
+                    seq_type if i == 0 else 0,
+                    0,
+                )
+            else:
+                raise ValueError(
+                    f"Unknown polyobject method {method!r}, expected 'start_line' or 'explicit'"
+                )
+
+            sd = self.add_sidedef(sec_idx, midtexture=wall_tex)
+            ld = self.add_linedef(v1, v2, sd, flags=ML_BLOCKING, special=sp, args=args)
+            line_indices.append(ld)
+            self.add_seg(v1, v2, bam_angle, ld, side=0, offset=0)
+
+        bbox = (anchor_y + h2, anchor_y - h2, anchor_x - w2, anchor_x + w2)
+        ss_idx = self.add_subsector(4, first_seg, bbox=bbox)
+
+        # Anchor thing (type 3000) at dummy anchor position; angle = tag
+        self.add_thing(x=anchor_x, y=anchor_y, type=3000, angle=tag)
+
+        # Spawn spot thing (3001 = normal, 3002 = crush) at destination position; angle = tag
+        spawn_type = 3002 if crush else 3001
+        self.add_thing(x=spawn_x, y=spawn_y, type=spawn_type, angle=tag)
+
+        return sec_idx, line_indices, ss_idx
+
     def add_two_sector_rooms(
         self,
         x: int = 0,

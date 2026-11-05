@@ -140,6 +140,16 @@ class GameSim:
                 player.cmd = cmds[idx]
             p_player_think(self, player)
 
+        if self.level is not None and hasattr(self.level, "polyobjs"):
+            poly_iterable = (
+                self.level.polyobjs.values()
+                if isinstance(self.level.polyobjs, dict)
+                else self.level.polyobjs
+            )
+            for po in poly_iterable:
+                if hasattr(po, "capture_prev_state"):
+                    po.capture_prev_state()
+
         self.thinkers.run_all(self)
         p_animate_surfaces(self)
         self.level_time += 1

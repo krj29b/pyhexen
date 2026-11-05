@@ -331,9 +331,24 @@ class ACSVM:
             ):
                 s.state = ACScriptState.ASTE_RUNNING
 
+    @staticmethod
+    def is_poly_busy(po_tag: int, sim: GameSim) -> bool:
+        """Check if polyobject with `po_tag` has active thinkers (po_man.c PO_Busy)."""
+        if sim.level is None or not hasattr(sim.level, "polyobjs"):
+            return False
+        if isinstance(sim.level.polyobjs, dict):
+            po = sim.level.polyobjs.get(po_tag)
+        else:
+            po = next((p for p in sim.level.polyobjs if getattr(p, "tag", None) == po_tag), None)
+        if po is None:
+            return False
+        return bool(po.busy)
+
     def poly_finished(self, po: int, sim: GameSim | None = None) -> None:
-        """Port of P_PolyobjFinished (p_acs.c)."""
-        for s in self.scripts.values():
+        """Port of P_PolyobjFinished (p_acs.c:851-867)."""
+        if sim is not None and self.is_poly_busy(po, sim):
+            return
+        for s in list(self.scripts.values()):
             if (
                 not s.removed
                 and s.state == ACScriptState.ASTE_WAITINGFORPOLY
@@ -643,13 +658,17 @@ class ACSVM:
                     script.state = ACScriptState.ASTE_WAITINGFORTAG
                     return
             elif cmd == PCode.PCD_POLYWAIT:
-                script.wait_value = pop()
-                script.state = ACScriptState.ASTE_WAITINGFORPOLY
-                return
+                tag = pop()
+                if self.is_poly_busy(tag, sim):
+                    script.wait_value = tag
+                    script.state = ACScriptState.ASTE_WAITINGFORPOLY
+                    return
             elif cmd == PCode.PCD_POLYWAITDIRECT:
-                script.wait_value = read_int()
-                script.state = ACScriptState.ASTE_WAITINGFORPOLY
-                return
+                tag = read_int()
+                if self.is_poly_busy(tag, sim):
+                    script.wait_value = tag
+                    script.state = ACScriptState.ASTE_WAITINGFORPOLY
+                    return
             elif cmd == PCode.PCD_CHANGEFLOOR:
                 f_idx = pop()
                 tag = pop()

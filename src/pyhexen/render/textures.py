@@ -456,10 +456,26 @@ class WorldShaderProgram:
         self.program["u_palette"].value = 2
         self.program["u_colormap"].value = 3
         self.program["u_fogmap"].value = 4
+        if "u_light_override" in self.program:
+            self.program["u_light_override"].value = -1.0
 
         identity = np.eye(4, dtype=np.float32)
+        self.set_model(identity)
         self.set_camera(identity, identity)
         self.set_lighting()
+
+    def set_model(self, model: np.ndarray | None = None) -> None:
+        """Update model transform matrix (converts row-major 4x4 numpy to GL column-major)."""
+        if "u_model" not in self.program:
+            return
+        if model is None:
+            model = np.eye(4, dtype=np.float32)
+        self.program["u_model"].write(np.ascontiguousarray(model.T, dtype=np.float32).tobytes())
+
+    def set_light_override(self, light_level: float = -1.0) -> None:
+        """Override vertex lighting if light_level >= 0.0, or use per-vertex light if -1.0."""
+        if "u_light_override" in self.program:
+            self.program["u_light_override"].value = float(light_level)
 
     def set_camera(self, view: np.ndarray, proj: np.ndarray) -> None:
         """Update view and projection matrices (converts row-major 4x4 numpy to GL column-major)."""

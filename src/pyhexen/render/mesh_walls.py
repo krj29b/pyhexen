@@ -317,6 +317,8 @@ def build_sector_walls(
     quads: list[WallQuad] = []
 
     for line in sector.lines:
+        if line.is_polyobj:
+            continue
         if line.front_side is not None and line.front_side.sector.index == sector_index:
             back_sec = line.back_side.sector if line.back_side is not None else None
             quads.extend(

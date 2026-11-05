@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import moderngl
 import numpy as np
@@ -19,6 +19,14 @@ from pyhexen.core.random import Random
 from pyhexen.render.camera import Camera
 from pyhexen.render.chunks import ChunkManager, DrawBatch, SectorChunk
 from pyhexen.render.context import RenderContext
+from pyhexen.render.polyobj import (
+    PolyMesh,
+    build_polyobj_mesh,
+    compute_poly_model_matrix,
+    interpolate_angle,
+    interpolate_coord,
+    poly_model_to_gl_matrix,
+)
 from pyhexen.render.sky import LIGHTNING_SPECIAL, LIGHTNING_SPECIAL2, SkyRenderer
 from pyhexen.render.sprites import SpriteRenderer
 from pyhexen.render.textures import (
@@ -70,6 +78,7 @@ class WorldRenderer:
 
         self._chunk_world_vaos: dict[int, tuple[moderngl.Buffer, moderngl.VertexArray]] = {}
         self._chunk_sky_vaos: dict[int, tuple[moderngl.Buffer, moderngl.VertexArray]] = {}
+        self.poly_meshes: dict[int, PolyMesh] = {}
         self._fallback_tex: GpuTexture | None = None
 
         if wad is not None:
@@ -160,6 +169,23 @@ class WorldRenderer:
 
         self.sprite_registry = SpriteRegistry(wad)
         self.sprite_renderer = SpriteRenderer(self.ctx, self.sprite_registry, self.tex_mgr)
+
+        self._release_poly_vaos()
+        if hasattr(level, "polyobjs") and level.polyobjs:
+            poly_list = (
+                level.polyobjs.values() if isinstance(level.polyobjs, dict) else level.polyobjs
+            )
+            tex_reg = self.tex_mgr.texture_registry if self.tex_mgr else None
+            for po in poly_list:
+                mesh = build_polyobj_mesh(po, textures=tex_reg, ctx=self.ctx)
+                if mesh.vbo is not None:
+                    mesh.vao = self.world_shader.create_vao(mesh.vbo)
+                self.poly_meshes[po.tag] = mesh
+
+    def _release_poly_vaos(self) -> None:
+        for mesh in self.poly_meshes.values():
+            mesh.release()
+        self.poly_meshes.clear()
 
     def _release_chunk_vaos(self) -> None:
         for _, vao in self._chunk_world_vaos.values():
@@ -296,6 +322,8 @@ class WorldRenderer:
 
         # 4. Draw opaque walls (SURFACE_WALL = 0.0) and flats (SURFACE_FLAT = 1.0)
         self.world_shader.set_camera(view, proj)
+        self.world_shader.set_model(None)
+        self.world_shader.set_light_override(-1.0)
         for chunk in self.chunks.chunks:
             if chunk.vbo is None or len(chunk.vertices) == 0:
                 continue
@@ -355,6 +383,15 @@ class WorldRenderer:
                     first=batch.vertex_offset,
                 )
 
+        # 5.5 Draw dynamic polyobjects (opaque and masked walls)
+        self.render_polyobjs(
+            alpha=alpha,
+            extralight=extralight,
+            palette_index=palette_index,
+            fixed_colormap=fixed_colormap,
+            gamma=gamma,
+        )
+
         # 6. Collect and draw opaque + translucent sprites
         if self.sprite_renderer is not None:
             opaque_sprites, translucent_sprites = self.sprite_renderer.collect_batches(
@@ -383,6 +420,99 @@ class WorldRenderer:
                 gamma=gamma,
             )
 
+    def render_polyobjs(
+        self,
+        alpha: float = 1.0,
+        extralight: int = 0,
+        palette_index: int = 0,
+        fixed_colormap: int = -1,
+        gamma: float = 1.0,
+    ) -> None:
+        """Render dynamic polyobject meshes with interpolated transform and sector lighting."""
+        if not self.poly_meshes or self.level is None or not hasattr(self.level, "polyobjs"):
+            return
+        poly_list = (
+            self.level.polyobjs.values()
+            if isinstance(self.level.polyobjs, dict)
+            else self.level.polyobjs
+        )
+        if not poly_list:
+            return
+
+        from pyhexen.core.fixed import FRACUNIT
+
+        for po in poly_list:
+            mesh = self.poly_meshes.get(po.tag)
+            if mesh is None or mesh.vbo is None or mesh.vertex_count == 0:
+                continue
+            vao = mesh.vao
+            if vao is None:
+                vao = self.world_shader.create_vao(mesh.vbo)
+                mesh.vao = vao
+            if vao is None:
+                continue
+
+            curr_x = (
+                po.start_spot.x if hasattr(po, "start_spot") else getattr(po, "start_spot_x", 0)
+            ) / float(FRACUNIT)
+            curr_y = (
+                po.start_spot.y if hasattr(po, "start_spot") else getattr(po, "start_spot_y", 0)
+            ) / float(FRACUNIT)
+            prev_x = getattr(po, "prev_x", int(curr_x * FRACUNIT)) / float(FRACUNIT)
+            prev_y = getattr(po, "prev_y", int(curr_y * FRACUNIT)) / float(FRACUNIT)
+
+            curr_ang_bam = getattr(po, "angle", 0) & 0xFFFFFFFF
+            prev_ang_bam = getattr(po, "prev_angle", curr_ang_bam) & 0xFFFFFFFF
+
+            ix = interpolate_coord(prev_x, curr_x, alpha)
+            iy = interpolate_coord(prev_y, curr_y, alpha)
+
+            curr_ang_deg = (curr_ang_bam * 360.0) / float(1 << 32)
+            prev_ang_deg = (prev_ang_bam * 360.0) / float(1 << 32)
+            iangle_deg = interpolate_angle(prev_ang_deg, curr_ang_deg, alpha)
+            iangle_rad = math.radians(iangle_deg)
+
+            m_2d = compute_poly_model_matrix(ix, iy, iangle_rad)
+            m_gl = poly_model_to_gl_matrix(m_2d)
+            self.world_shader.set_model(m_gl)
+
+            sub = self.level.point_in_subsector(
+                round(ix * float(FRACUNIT)),
+                round(iy * float(FRACUNIT)),
+            )
+            sector = (
+                sub.sector
+                if sub is not None
+                else (po.subsector.sector if po.subsector is not None else None)
+            )
+            sec_light = float(sector.light_level) if sector is not None else 160.0
+            sec_extra = extralight + (
+                self._sector_lightning_extralight(sector) if sector is not None else 0
+            )
+
+            self.world_shader.set_light_override(sec_light)
+            self.world_shader.set_lighting(
+                palette_index=palette_index,
+                extralight=sec_extra,
+                fixed_colormap=fixed_colormap,
+                use_fogmap=self.use_fogmap,
+                gamma=gamma,
+                alpha=1.0,
+            )
+
+            for batch in mesh.batches:
+                gpu_tex = self._resolve_batch_texture(batch)
+                self.world_shader.bind_surface_texture(self.tex_mgr, gpu_tex)
+                vao.render(
+                    mode=moderngl.TRIANGLES,
+                    vertices=batch.vertex_count,
+                    first=batch.vertex_offset,
+                )
+
+        # Reset model transform and light override
+        self.world_shader.set_model(None)
+        self.world_shader.set_light_override(-1.0)
+
     def save_screenshot(self, path: Path | str | None = None) -> Path:
         """Read the current framebuffer and save it as a top-down PNG image."""
         if path is None:
@@ -397,6 +527,7 @@ class WorldRenderer:
 
     def release(self) -> None:
         """Release all GPU resources owned by WorldRenderer."""
+        self._release_poly_vaos()
         self._release_chunk_vaos()
         if self.chunks is not None:
             for chunk in self.chunks.chunks:
@@ -415,3 +546,8 @@ class WorldRenderer:
             self.tex_mgr = None
         self.sky_renderer.release()
         self.world_shader.release()
+
+
+def render_polyobjs(renderer_inst: WorldRenderer, *args: Any, **kwargs: Any) -> Any:
+    """Helper module-level entry point for polyobject rendering."""
+    return renderer_inst.render_polyobjs(*args, **kwargs)

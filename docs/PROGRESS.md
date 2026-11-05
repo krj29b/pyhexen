@@ -58,9 +58,9 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T8.2 | ACS VM core | T8.1, T5.2 | DONE | `sim/acs/vm.py` (`ACSVM`, `RunningScript`, stack machine, script/map/world vars, arithmetic/logic, flow, delay, instruction budget guard) |
 | T8.3 | ACS game pcodes | T8.2, T7.1 | DONE | `sim/acs/vm.py` (all 102 Hexen PCD opcodes, line specials, thing counts, tag/script waits, print/sound events, line/sector modifiers) |
 | T8.4 | Script lifecycle & ACS store | T8.3 | DONE | `sim/acs/store.py` (`ACSStore`), specials 80-83 in `dispatcher.py`, open script delays (35 tics), sector mover `tag_finished` wakeups |
-| T9.1 | Polyobj spawn | T5.4, T7.1 | TODO | |
-| T9.2 | Polyobj movement | T9.1, T6.3 | TODO | |
-| T9.3 | Polyobj rendering | T9.2, T4.7 | TODO | |
+| T9.1 | Polyobj spawn | T5.4, T7.1 | DONE | `sim/polyobj.py` (`PolyBlock`, `Polyobj`, 4-pass `init_polyobjs`, StartLine & ExplicitLine collection, vertex deduplication, dynamic blockmap linking, static wall exclusion) |
+| T9.2 | Polyobj movement | T9.1, T6.3 | DONE | `sim/polyobj.py` (`RotatePolyThinker`, `MovePolyThinker`, `PolyDoorThinker`, `po_move_polyobj`, `po_rotate_polyobj`, `check_mobj_blocking`, `thrust_mobj`, pinned 3-pt crush damage, specials 2..4, 6..8, 90..93 in `dispatcher.py`, ACS `PCD_POLYWAIT` & `poly_finished` in `vm.py`) |
+| T9.3 | Polyobj rendering | T9.2, T4.7 | DONE | `render/polyobj.py` (`PolyMesh`, local quads, `u_model` uniform in `world.vert`, 4x4 GL model matrix, shortest-arc sub-tic interpolation, dynamic sector lighting, `WorldRenderer` integration) |
 | T10.1 | Damage & death | T6.3 | TODO | |
 | T10.2 | Attacks (hitscan, missiles) | T10.1, T6.2 | TODO | |
 | T10.3 | Sight | T3.3 | TODO | |
@@ -98,3 +98,6 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 ## Session log
 <!-- Append: date · agent · task(s) · one-line summary -->
 - 2026-11-05 · Antigravity · T8.2–T8.4 · ACS VM interpreter, 102 game pcodes, lifecycle specials (80-83), ACSStore, open scripts, sector mover tag finished wakeups
+- 2026-11-05 · worker_m1 · T9.1 · Polyobject data structures, 4-pass PO_Init, line collection (StartLine special 1 & ExplicitLine special 5), vertex deduplication, dynamic blockmap linking, subsector association, static mesh wall filtering
+- 2026-11-05 · worker_m2 · T9.2 · Polyobject movement thinkers (Rotate, Move, Door slide/swing), collision/thrust/crushing physics, line specials 2-4/6-8/90-93 dispatch, mirror propagation, ACS PCD_POLYWAIT & wakeup
+- 2026-11-05 · worker_m3_1 · T9.3 · Polyobject GPU rendering: PolyMesh local quads, u_model matrix in world.vert, shortest-arc sub-tic lerp, dynamic sector lighting, WorldRenderer integration, all 160 e2e tests & 450 total tests passing

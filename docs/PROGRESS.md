@@ -7,14 +7,14 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | ID | Task | Deps | Status | Notes |
 |---|---|---|---|---|
 | T0.1 | Repository scaffold | – | DONE | Package structure, pyproject.toml, GPL-2.0 LICENSE, .gitignore, config.example.toml, version CLI + tests |
-| T0.2 | Reference source fetch | T0.1 | IN PROGRESS (lead/2026-11-05) | |
-| T0.3 | Config & IWAD discovery | T0.1 | TODO | |
-| T0.4 | CI | T0.1 | TODO | |
-| T0.5 | Synthetic WAD builder | T0.1 | TODO | |
-| T1.1 | Fixed-point math | T0.1 | TODO | |
-| T1.2 | Trig tables & angles | T1.1, T0.2 | TODO | |
-| T1.3 | Random | T0.2 | TODO | |
-| T1.4 | WAD reader | T0.5 | TODO | |
+| T0.2 | Reference source fetch | T0.1 | DONE | Pinned `chocolate-doom-3.1.1`; use `powershell -ExecutionPolicy Bypass -File ./tools/fetch_reference.ps1` on Windows if execution policy is Restricted |
+| T0.3 | Config & IWAD discovery | T0.1 | DONE | `app/config.py` (CLI > `PYHEXEN_IWAD` > `config.toml`) and `iwad_path` fixture in `tests/conftest.py` |
+| T0.4 | CI | T0.1 | DONE | `.github/workflows/ci.yml` for Windows + Ubuntu Python 3.12 running ruff and pytest (excluding `wad` and `gl`) |
+| T0.5 | Synthetic WAD builder | T0.1 | IN PROGRESS (agent-wad/2026-11-05) | |
+| T1.1 | Fixed-point math | T0.1 | IN PROGRESS (agent-math/2026-11-05) | |
+| T1.2 | Trig tables & angles | T1.1, T0.2 | IN PROGRESS (agent-math/2026-11-05) | |
+| T1.3 | Random | T0.2 | DONE | Hexen flat distribution 256-entry `RNDTABLE` from `m_random.c`; `P_Random`/`M_Random` increment index before lookup |
+| T1.4 | WAD reader | T0.5 | IN PROGRESS (agent-wad/2026-11-05) | |
 | T2.1 | Palette & colormaps | T1.4 | TODO | |
 | T2.2 | Picture decoder | T1.4 | TODO | |
 | T2.3 | Composite wall textures | T2.2 | TODO | |
@@ -35,8 +35,8 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T4.6 | Sky | T4.5, T2.6 | TODO | |
 | T4.7 | Sector chunks & dynamic rebuild | T4.3, T4.4 | TODO | |
 | T4.8 | Fly mode & screenshots | T4.6, T4.7 | TODO | **M2** |
-| T5.1 | Info table generator | T0.2 | TODO | |
-| T5.2 | Thinkers & ticker | T5.1 | TODO | |
+| T5.1 | Info table generator | T0.2 | IN PROGRESS (agent-sim/2026-11-05) | |
+| T5.2 | Thinkers & ticker | T5.1 | IN PROGRESS (agent-sim/2026-11-05) | |
 | T5.3 | Map objects | T5.2, T3.3 | TODO | |
 | T5.4 | Map thing spawning | T5.3 | TODO | |
 | T5.5 | Sprite rendering | T5.3, T2.5, T4.5 | TODO | |

@@ -15,7 +15,7 @@ Add new ADRs at the bottom. Never delete one; supersede it instead.
 **Status:** ACCEPTED
 **Context:** We need an authoritative, GPL, portable version of the original source.
 **Decision:** Use Chocolate Doom, pinned to a release tag, cloned to `reference/` (gitignored). Behaviour must match it; code structure may differ.
-**Pinned tag:** _to be filled in by T0.2_
+**Pinned tag:** `chocolate-doom-3.1.1` (commit `410d96855b5df5410ff591a90efeafa889119224`)
 **Consequences:** The project is GPL-2.0-or-later.
 
 ## ADR-003 — Fixed-point integer simulation

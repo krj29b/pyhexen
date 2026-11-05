@@ -55,9 +55,9 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T7.8 | Switches, animations, scrolling | T7.1, T4.2 | DONE | `sim/specials/switches.py` (`SWITCH_LIST`, `ButtonThinker`), `anim.py` (`SurfaceAnimator`), `scroll.py` (`ScrollThinker`) |
 | T7.9 | Sector specials | T7.1 | DONE | `sim/specials/sector_specials.py` (damage floors, secrets, current pushers) — **M3 complete** |
 | T8.1 | BEHAVIOR loader | T3.1 | DONE | `sim/acs/loader.py` (`parse_behavior`, `OPEN_SCRIPTS_BASE = 1000`, string table) |
-| T8.2 | ACS VM core | T8.1, T5.2 | TODO | |
-| T8.3 | ACS game pcodes | T8.2, T7.1 | TODO | |
-| T8.4 | Script lifecycle & ACS store | T8.3 | TODO | |
+| T8.2 | ACS VM core | T8.1, T5.2 | IN PROGRESS (Antigravity/2026-11-05) | |
+| T8.3 | ACS game pcodes | T8.2, T7.1 | IN PROGRESS (Antigravity/2026-11-05) | |
+| T8.4 | Script lifecycle & ACS store | T8.3 | IN PROGRESS (Antigravity/2026-11-05) | |
 | T9.1 | Polyobj spawn | T5.4, T7.1 | TODO | |
 | T9.2 | Polyobj movement | T9.1, T6.3 | TODO | |
 | T9.3 | Polyobj rendering | T9.2, T4.7 | TODO | |

@@ -62,7 +62,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T9.2 | Polyobj movement | T9.1, T6.3 | DONE | `sim/polyobj.py` (`RotatePolyThinker`, `MovePolyThinker`, `PolyDoorThinker`, `po_move_polyobj`, `po_rotate_polyobj`, `check_mobj_blocking`, `thrust_mobj`, pinned 3-pt crush damage, specials 2..4, 6..8, 90..93 in `dispatcher.py`, ACS `PCD_POLYWAIT` & `poly_finished` in `vm.py`) |
 | T9.3 | Polyobj rendering | T9.2, T4.7 | DONE | `render/polyobj.py` (`PolyMesh`, local quads, `u_model` uniform in `world.vert`, 4x4 GL model matrix, shortest-arc sub-tic interpolation, dynamic sector lighting, `WorldRenderer` integration) |
 | T10.1 | Damage & death | T6.3 | DONE | `sim/inter.py` (`damage_mobj`, `kill_mobj`, `falling_damage`, `poison_damage`, class armor degradation/absorption, momentum thrust, pain/death state branching) |
-| T10.2 | Attacks (hitscan, missiles) | T10.1, T6.2 | TODO | |
+| T10.2 | Attacks (hitscan, missiles) | T10.1, T6.2 | DONE | `sim/attacks.py` (`aim_line_attack`, `line_attack`, `spawn_missile`, `spawn_missile_angle`, `seeker_missile`, `radius_attack`, puff/blood spawners), `sim/map.py` (ripper penetration `MF2_RIP`, missile damage collision), `sim/movement.py` (missile explosion audio) |
 | T10.3 | Sight | T3.3 | TODO | |
 | T10.4 | Monster AI base | T10.2, T10.3 | TODO | |
 | T10.5a | Monster actions: common actors | T10.4 | TODO | |
@@ -102,3 +102,4 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 - 2026-11-05 · worker_m2 · T9.2 · Polyobject movement thinkers (Rotate, Move, Door slide/swing), collision/thrust/crushing physics, line specials 2-4/6-8/90-93 dispatch, mirror propagation, ACS PCD_POLYWAIT & wakeup
 - 2026-11-05 · worker_m3_1 · T9.3 · Polyobject GPU rendering: PolyMesh local quads, u_model matrix in world.vert, shortest-arc sub-tic lerp, dynamic sector lighting, WorldRenderer integration, all 160 e2e tests & 450 total tests passing
 - 2026-11-07 · worker_t10_1 · T10.1 · Combat damage & death simulation in sim/inter.py: P_DamageMobj, P_KillMobj, class armor tables/formulas (Fighter, Cleric, Mage), fixed-point momentum thrust, pain chance and wake-up aggro, death variants (normal, extreme gib, flame burn, ice freeze/shatter), 62 unit tests passing
+- 2026-11-07 · worker_t10_2 · T10.2 · Combat attacks (hitscan, projectiles, rippers, homing seekers, radius damage splash) in sim/attacks.py, sim/map.py, and sim/movement.py, 58 comprehensive tests passing, full 605-test suite 100% clean

@@ -86,6 +86,7 @@ class MapCheckState:
     second_slide_line: Line | None = None
     tmxmove: int = 0
     tmymove: int = 0
+    linetarget: Mobj | None = None
 
 
 def check_for_push_special(sim: GameSim, line: Line, side: int, mobj: Mobj) -> None:
@@ -211,6 +212,66 @@ def pit_check_thing(sim: GameSim, thing: Mobj) -> bool:
                 return False
         if not (thing.flags & MobjFlag.MF_SHOOTABLE):
             return not bool(thing.flags & MobjFlag.MF_SOLID)
+        if thing.flags2 & MobjFlag2.MF2_NONSHOOTABLE:
+            return True
+
+        # Ripper missile (MF2_RIP)
+        if tmthing.flags2 & MobjFlag2.MF2_RIP:
+            if (
+                not (thing.flags & MobjFlag.MF_NOBLOOD)
+                and not (thing.flags2 & MobjFlag2.MF2_REFLECTIVE)
+                and not (thing.flags2 & MobjFlag2.MF2_INVULNERABLE)
+            ):
+                from pyhexen.sim.attacks import spawn_ripper_blood
+
+                spawn_ripper_blood(sim, tmthing)
+            damage = ((sim.rng.p_random() & 3) + 2) * tmthing.damage
+            from pyhexen.sim.inter import damage_mobj
+
+            damage_mobj(
+                sim,
+                target=thing,
+                inflictor=tmthing,
+                source=tmthing.target,
+                damage=damage,
+            )
+            if (thing.flags2 & MobjFlag2.MF2_PUSHABLE) and not (
+                tmthing.flags2 & MobjFlag2.MF2_CANNOTPUSH
+            ):
+                thing.momx += tmthing.momx >> 2
+                thing.momy += tmthing.momy >> 2
+            st.spechit.clear()
+            return True
+
+        # Normal missile impact
+        damage = ((sim.rng.p_random() % 8) + 1) * tmthing.damage
+        if damage > 0:
+            if (
+                not (thing.flags & MobjFlag.MF_NOBLOOD)
+                and not (thing.flags2 & MobjFlag2.MF2_REFLECTIVE)
+                and not (thing.flags2 & MobjFlag2.MF2_INVULNERABLE)
+                and tmthing.type
+                not in (
+                    MobjType.MT_TELOTHER_FX1,
+                    MobjType.MT_TELOTHER_FX2,
+                    MobjType.MT_TELOTHER_FX3,
+                    MobjType.MT_TELOTHER_FX4,
+                    MobjType.MT_TELOTHER_FX5,
+                )
+                and (sim.rng.p_random() < 192)
+            ):
+                from pyhexen.sim.attacks import spawn_blood_splatter
+
+                spawn_blood_splatter(sim, tmthing.x, tmthing.y, tmthing.z, thing)
+            from pyhexen.sim.inter import damage_mobj
+
+            damage_mobj(
+                sim,
+                target=thing,
+                inflictor=tmthing,
+                source=tmthing.target,
+                damage=damage,
+            )
         return False
 
     if thing.flags & MobjFlag.MF_SPECIAL:
@@ -308,6 +369,11 @@ def try_move(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
         if st.blocking_mobj is None:
             _check_spechit_push(sim, thing, oldx, oldy)
         return False
+
+    if level is None:
+        thing.x = x
+        thing.y = y
+        return True
 
     if not (thing.flags & MobjFlag.MF_NOCLIP):
         if st.tmceilingz - st.tmfloorz < thing.height:

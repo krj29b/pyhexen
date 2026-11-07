@@ -20,8 +20,9 @@ from pyhexen.core.angles import (
     fine_cosine,
     fine_sine,
 )
+from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACUNIT, c_div, fixed_mul
-from pyhexen.sim.info_data import MOBJINFO, MobjFlag, MobjFlag2, MobjType
+from pyhexen.sim.info_data import MOBJINFO, MobjFlag, MobjFlag2, MobjType, SfxEnum
 from pyhexen.sim.map import check_on_mobj, slide_move, try_move
 from pyhexen.sim.mobj import FLOAT_BOB_OFFSETS, Mobj, remove_mobj, set_mobj_state
 
@@ -60,6 +61,36 @@ def explode_missile(sim: GameSim, mo: Mobj) -> None:
     mo.momz = 0
     set_mobj_state(sim, mo, MOBJINFO[mo.type].deathstate)
     mo.flags &= ~MobjFlag.MF_MISSILE
+    if mo.type in (MobjType.MT_SORCBALL1, MobjType.MT_SORCBALL2, MobjType.MT_SORCBALL3):
+        sim.events.emit(
+            SoundEvent(
+                sound_id=int(SfxEnum.SFX_SORCERER_BIGBALLEXPLODE),
+                origin_id=0,
+                x=mo.x,
+                y=mo.y,
+                z=mo.z,
+            )
+        )
+    elif mo.type == MobjType.MT_SORCFX1:
+        sim.events.emit(
+            SoundEvent(
+                sound_id=int(SfxEnum.SFX_SORCERER_HEADSCREAM),
+                origin_id=0,
+                x=mo.x,
+                y=mo.y,
+                z=mo.z,
+            )
+        )
+    elif mo.info.deathsound:
+        sim.events.emit(
+            SoundEvent(
+                sound_id=int(mo.info.deathsound),
+                origin_id=mo.tid,
+                x=mo.x,
+                y=mo.y,
+                z=mo.z,
+            )
+        )
 
 
 def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
@@ -137,7 +168,7 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
                     and ceilingline.back_sector is not None
                     and ceilingline.back_sector.ceiling_pic.startswith("F_SKY")
                 ):
-                    if mo.type == MobjType.MT_BLOODSPLITTER:
+                    if mo.type == MobjType.MT_BLOODSPLATTER:
                         mo.momx = 0
                         mo.momy = 0
                         return
@@ -252,7 +283,7 @@ def p_z_movement(sim: GameSim, mo: Mobj) -> None:
             mo.momz = -mo.momz
         if (mo.flags & MobjFlag.MF_MISSILE) and not (mo.flags & MobjFlag.MF_NOCLIP):
             if mo.subsector is not None and mo.subsector.sector.ceiling_pic.startswith("F_SKY"):
-                if mo.type == MobjType.MT_BLOODSPLITTER:
+                if mo.type == MobjType.MT_BLOODSPLATTER:
                     mo.momx = 0
                     mo.momy = 0
                     return

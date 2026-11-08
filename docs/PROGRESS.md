@@ -66,7 +66,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T10.3 | Sight | T3.3 | DONE | `sim/sight.py` (`check_sight`, authoritative blockmap DDA raycaster, 75% eye-height, `RejectMatrix` fast sector rejection, 2-sided portal slope aperture clipping, 1-sided instant abort), replaced placeholder in `attacks.py`, `set_reject` in `wadbuilder.py` |
 | T10.4 | Monster AI base | T10.2, T10.3 | DONE | `sim/enemy.py` (`noise_alert`, `recursive_sound`, `look_for_players`, `look_for_monsters`, `check_melee_range`, `check_missile_range`, 8-way `move`, `try_walk`, `new_chase_dir`, `A_Look`, `A_Chase`, `A_FastChase`, `A_FaceTarget`, `A_Pain`, `A_Scream`, corpse queue, ice death helpers, invulnerability/reflection flags) |
 | T10.5a | Monster actions: common actors | T10.4 | DONE | `sim/actions/monsters_common.py` (Ettin, Afrit/FireDemon, Centaur/Slaughtaur, Chaos Serpent Demon1/2, Wendigo/IceGuy, Stalker/Serpent, floor splash/terrain helpers, visibility/shootability helpers; 68 registered actions total) |
-| T10.5b | Monster actions: casters | T10.4 | TODO | |
+| T10.5b | Monster actions: casters | T10.4 | IN PROGRESS (Antigravity/2026-11-08) | |
 | T10.5c | Monster actions: bosses | T10.4 | TODO | |
 | T10.6 | Weapon framework & psprites | T10.2, T6.4 | TODO | |
 | T10.7 | Fighter weapons | T10.6 | TODO | |

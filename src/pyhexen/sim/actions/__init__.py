@@ -25,6 +25,7 @@ def _ensure_actions_loaded() -> None:
     global _actions_loaded
     if not _actions_loaded:
         _actions_loaded = True
+        import pyhexen.sim.actions.monsters_bosses  # noqa: F401
         import pyhexen.sim.actions.monsters_casters  # noqa: F401
         import pyhexen.sim.actions.monsters_common  # noqa: F401
         import pyhexen.sim.enemy  # noqa: F401

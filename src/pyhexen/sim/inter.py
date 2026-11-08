@@ -175,7 +175,17 @@ def teleport_other(sim: GameSim, victim: Mobj) -> None:
 
 
 def minotaur_slam(sim: GameSim, source: Mobj, target: Mobj) -> None:
-    """Port of P_MinotaurSlam (p_inter.c). Stubbed until minotaur combat AI."""
+    """Port of P_MinotaurSlam (p_inter.c:1513)."""
+    angle = (
+        (point_to_angle2(source.x, source.y, target.x, target.y) & 0xFFFFFFFF) >> ANGLETOFINESHIFT
+    ) & FINEMASK
+    thrust = 16 * FRACUNIT + (sim.rng.p_random() << 10)
+    target.momx += fixed_mul(thrust, fine_cosine(angle))
+    target.momy += fixed_mul(thrust, fine_sine(angle))
+    dmg = ((sim.rng.p_random() & 7) + 1) * 4
+    damage_mobj(sim, target, None, source, dmg)
+    if target.player is not None:
+        target.reactiontime = 14 + (sim.rng.p_random() & 7)
 
 
 def drop_weapon(sim: GameSim, player: Player) -> None:

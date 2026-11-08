@@ -10,7 +10,6 @@ from pyhexen.sim.attacks import (
     TOPSLOPE,
     aim_line_attack,
     check_missile_spawn,
-    check_sight,
     face_mobj,
     line_attack,
     radius_attack,
@@ -24,6 +23,7 @@ from pyhexen.sim.attacks import (
     spawn_puff,
     spawn_ripper_blood,
 )
+from pyhexen.sim.sight import check_sight
 
 __all__ = [
     "BOTTOMSLOPE",

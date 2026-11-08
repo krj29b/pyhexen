@@ -55,6 +55,7 @@ from pyhexen.sim.mobj import (
     Mobj,
     spawn_mobj,
 )
+from pyhexen.sim.sight import check_sight
 from pyhexen.world.blockmap import MAPBLOCKSHIFT
 from pyhexen.world.level import (
     ML_TWOSIDED,
@@ -777,53 +778,6 @@ def line_attack(
                 puff_type=m_puff_type,
                 linetarget=None,
             )
-
-
-def check_sight(sim: GameSim, t1: Mobj, t2: Mobj) -> bool:
-    """Port of P_CheckSight (p_sight.c).
-
-    Returns True if an unobstructed line of sight exists between t1 and t2.
-    """
-    if sim.level is None:
-        return True
-
-    x1, y1 = t1.x, t1.y
-    z1 = t1.z + (t1.height >> 1)
-    x2, y2 = t2.x, t2.y
-    z2 = t2.z + (t2.height >> 1)
-
-    if x1 == x2 and y1 == y2:
-        return True
-
-    sight_blocked = False
-
-    def sight_traverse(in_intercept: Intercept) -> bool:
-        nonlocal sight_blocked
-        if not in_intercept.is_aline:
-            return True
-
-        li = in_intercept.line
-        if li is None:
-            return True
-
-        if not (li.flags & ML_TWOSIDED):
-            sight_blocked = True
-            return False  # 1-sided line blocks vision
-
-        open_info = line_opening(li)
-        if open_info.openbottom >= open_info.opentop:
-            sight_blocked = True
-            return False  # closed portal/door
-
-        ray_z = z1 + fixed_mul(z2 - z1, in_intercept.frac)
-        if ray_z < open_info.openbottom or ray_z > open_info.opentop:
-            sight_blocked = True
-            return False  # ray clipped by floor/ceiling step
-
-        return True
-
-    path_traverse(sim.level, x1, y1, x2, y2, PT_ADDLINES, sight_traverse)
-    return not sight_blocked
 
 
 def radius_attack(

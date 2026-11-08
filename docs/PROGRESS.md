@@ -63,7 +63,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T9.3 | Polyobj rendering | T9.2, T4.7 | DONE | `render/polyobj.py` (`PolyMesh`, local quads, `u_model` uniform in `world.vert`, 4x4 GL model matrix, shortest-arc sub-tic interpolation, dynamic sector lighting, `WorldRenderer` integration) |
 | T10.1 | Damage & death | T6.3 | DONE | `sim/inter.py` (`damage_mobj`, `kill_mobj`, `falling_damage`, `poison_damage`, class armor degradation/absorption, momentum thrust, pain/death state branching) |
 | T10.2 | Attacks (hitscan, missiles) | T10.1, T6.2 | DONE | `sim/attacks.py` (`aim_line_attack`, `line_attack`, `spawn_missile`, `spawn_missile_angle`, `seeker_missile`, `radius_attack`, puff/blood spawners), `sim/map.py` (ripper penetration `MF2_RIP`, missile damage collision), `sim/movement.py` (missile explosion audio) |
-| T10.3 | Sight | T3.3 | TODO | |
+| T10.3 | Sight | T3.3 | DONE | `sim/sight.py` (`check_sight`, authoritative blockmap DDA raycaster, 75% eye-height, `RejectMatrix` fast sector rejection, 2-sided portal slope aperture clipping, 1-sided instant abort), replaced placeholder in `attacks.py`, `set_reject` in `wadbuilder.py` |
 | T10.4 | Monster AI base | T10.2, T10.3 | TODO | |
 | T10.5a | Monster actions: common actors | T10.4 | TODO | |
 | T10.5b | Monster actions: casters | T10.4 | TODO | |
@@ -103,3 +103,4 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 - 2026-11-05 · worker_m3_1 · T9.3 · Polyobject GPU rendering: PolyMesh local quads, u_model matrix in world.vert, shortest-arc sub-tic lerp, dynamic sector lighting, WorldRenderer integration, all 160 e2e tests & 450 total tests passing
 - 2026-11-07 · worker_t10_1 · T10.1 · Combat damage & death simulation in sim/inter.py: P_DamageMobj, P_KillMobj, class armor tables/formulas (Fighter, Cleric, Mage), fixed-point momentum thrust, pain chance and wake-up aggro, death variants (normal, extreme gib, flame burn, ice freeze/shatter), 62 unit tests passing
 - 2026-11-07 · worker_t10_2 · T10.2 · Combat attacks (hitscan, projectiles, rippers, homing seekers, radius damage splash) in sim/attacks.py, sim/map.py, and sim/movement.py, 58 comprehensive tests passing, full 605-test suite 100% clean
+- 2026-11-08 · worker_t10_3 · T10.3 · Monster line-of-sight checking in sim/sight.py with RejectMatrix fast rejection, 75% eye-level, blockmap DDA traversal, 2-sided slope aperture clipping, 1-sided early-out; replaced placeholder in attacks.py; 36 tests in tests/unit/test_sight.py, 656 tests passing

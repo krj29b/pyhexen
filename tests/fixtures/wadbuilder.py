@@ -362,6 +362,7 @@ class MapBuilder:
         self.nodes: list[bytes] = []
         self.sectors: list[bytes] = []
         self._behavior: bytes | None = None
+        self._reject: bytes | None = None
 
     def add_vertex(self, x: int, y: int) -> int:
         """Add a vertex in map units (int16) and return its index."""
@@ -566,6 +567,11 @@ class MapBuilder:
     def set_behavior(self, data: bytes) -> Self:
         """Set custom BEHAVIOR lump bytes."""
         self._behavior = bytes(data)
+        return self
+
+    def set_reject(self, data: bytes) -> Self:
+        """Set custom REJECT lump bytes."""
+        self._reject = bytes(data)
         return self
 
     def add_room(
@@ -927,6 +933,8 @@ class MapBuilder:
         return b"".join(generated_nodes)
 
     def _build_reject_bytes(self) -> bytes:
+        if self._reject is not None:
+            return self._reject
         num_sec = len(self.sectors)
         size = math.ceil((num_sec * num_sec) / 8)
         return b"\x00" * size

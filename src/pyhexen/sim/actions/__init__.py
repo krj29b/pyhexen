@@ -29,6 +29,7 @@ def _ensure_actions_loaded() -> None:
         import pyhexen.sim.actions.monsters_casters  # noqa: F401
         import pyhexen.sim.actions.monsters_common  # noqa: F401
         import pyhexen.sim.enemy  # noqa: F401
+        import pyhexen.sim.psprites  # noqa: F401
 
 
 def action(name: str) -> Callable[[ActionCallable], ActionCallable]:

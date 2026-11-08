@@ -41,6 +41,14 @@ from pyhexen.core.ticcmd import (
 from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, StateNum
 from pyhexen.sim.line_activation import p_use_lines
 from pyhexen.sim.mobj import ONFLOORZ, Mobj, set_mobj_state, spawn_mobj
+from pyhexen.sim.psprites import (
+    NUMPSPRITES,
+    WP_FIRST,
+    WP_NOCHANGE,
+    PspDef,
+    p_move_psprites,
+    p_setup_psprites,
+)
 from pyhexen.sim.specials.sector_specials import p_player_in_special_sector
 
 if TYPE_CHECKING:
@@ -142,12 +150,14 @@ class Player:
     armor_points: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
     keys: int = 0
     mana: list[int] = field(default_factory=lambda: [0, 0])
-    readyweapon: int = 0
-    pendingweapon: int = 0
+    readyweapon: int = WP_FIRST
+    pendingweapon: int = WP_NOCHANGE
     weaponowned: list[bool] = field(default_factory=lambda: [True, False, False, False])
+    psprites: list[PspDef] = field(default_factory=lambda: [PspDef() for _ in range(NUMPSPRITES)])
     pieces: int = 0
     attackdown: bool = False
     usedown: bool = False
+    refire: int = 0
     jump_tics: int = 0
     lookdir: int = 0
     centering: bool = False
@@ -340,6 +350,8 @@ def p_death_think(sim: GameSim, player: Player) -> None:
     if mo is None:
         return
 
+    p_move_psprites(sim, player)
+
     onground = mo.z <= mo.floorz
     if mo.type in (MobjType.MT_BLOODYSKULL, MobjType.MT_ICECHUNK):
         player.viewheight = 6 * FRACUNIT
@@ -456,6 +468,8 @@ def p_player_think(sim: GameSim, player: Player) -> None:
     else:
         player.usedown = False
 
+    p_move_psprites(sim, player)
+
     if player.damagecount > 0:
         player.damagecount -= 1
 
@@ -506,6 +520,7 @@ def spawn_player(
         health=mo.health,
     )
     mo.player = player
+    p_setup_psprites(sim, player)
     mo.capture_prev_state()
     if player not in sim.players:
         sim.players.append(player)

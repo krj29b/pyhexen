@@ -189,7 +189,10 @@ def minotaur_slam(sim: GameSim, source: Mobj, target: Mobj) -> None:
 
 
 def drop_weapon(sim: GameSim, player: Player) -> None:
-    """Port of P_DropWeapon (p_pspr.c). Stubbed until weapon framework (T10.6)."""
+    """Port of P_DropWeapon (p_pspr.c)."""
+    from pyhexen.sim.psprites import p_drop_weapon
+
+    p_drop_weapon(sim, player)
 
 
 def active_minotaur(sim: GameSim, player: Player) -> bool:

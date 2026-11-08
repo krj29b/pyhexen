@@ -17,6 +17,15 @@ ActionCallable = Callable[..., None]
 
 _ACTIONS: dict[str, ActionCallable] = {}
 _STUBS: dict[str, ActionCallable] = {}
+_actions_loaded: bool = False
+
+
+def _ensure_actions_loaded() -> None:
+    """Ensure action modules are imported to register @action decorators."""
+    global _actions_loaded
+    if not _actions_loaded:
+        _actions_loaded = True
+        import pyhexen.sim.enemy  # noqa: F401
 
 
 def action(name: str) -> Callable[[ActionCallable], ActionCallable]:
@@ -45,6 +54,8 @@ def get_action(name: str | None) -> ActionCallable | None:
     """Return the registered action callable for `name`, a stub if unimplemented, or None."""
     if name is None or name == "NULL":
         return None
+    if name not in _ACTIONS:
+        _ensure_actions_loaded()
     if name in _ACTIONS:
         return _ACTIONS[name]
     if name not in _STUBS:
@@ -54,10 +65,13 @@ def get_action(name: str | None) -> ActionCallable | None:
 
 def is_action_implemented(name: str) -> bool:
     """Return True if `name` has a registered non-stub implementation."""
+    if name not in _ACTIONS:
+        _ensure_actions_loaded()
     return name in _ACTIONS
 
 
 def get_action_report() -> dict[str, bool]:
     """Return a sorted mapping of every unique action_name in STATES to its implemented status."""
+    _ensure_actions_loaded()
     unique_names = sorted({s.action_name for s in STATES if s.action_name is not None})
     return {name: is_action_implemented(name) for name in unique_names}

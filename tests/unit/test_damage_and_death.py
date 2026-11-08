@@ -370,11 +370,14 @@ def test_pain_null_painstate_safe(sim: GameSim, monkeypatch: pytest.MonkeyPatch)
 def test_retaliation_target_assignment(sim: GameSim, monkeypatch: pytest.MonkeyPatch) -> None:
     target = make_mobj(sim, MobjType.MT_ETTIN)
     attacker = make_mobj(sim, MobjType.MT_CENTAUR)
+    attacker.x = 500 * FRACUNIT
     # Fail pain chance so target transitions to seestate
     monkeypatch.setattr(Random, "p_random", lambda self: 255)
     damage_mobj(sim, target, inflictor=None, source=attacker, damage=20)
     assert target.target is attacker
-    assert target.threshold == 100
+    # In authentic C Hexen, set_mobj_state enters seestate and runs
+    # A_Chase, decrementing threshold
+    assert target.threshold == 99
     assert target.state_num == target.info.seestate
 
 

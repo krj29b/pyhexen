@@ -173,6 +173,7 @@ class Mobj(Thinker):
     movedir: int = 0
     movecount: int = 0
     target: Mobj | None = None
+    tracer: Mobj | None = None
     reactiontime: int = 0
     threshold: int = 0
     player: Any = None

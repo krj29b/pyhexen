@@ -71,7 +71,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T10.6 | Weapon framework & psprites | T10.2, T6.4 | DONE | `sim/psprites.py` (`WeaponInfo`, `WeaponManaUse`, `PspDef`, `p_set_psprite`, `p_move_psprites`, `p_bring_up_weapon`, `p_check_mana`, `p_fire_weapon`, `p_drop_weapon`, `give_mana`, `give_weapon`, `give_weapon_piece`, `A_WeaponReady`, `A_ReFire`, `A_Lower`, `A_Raise`, `A_SnoutAttack`, `A_Light0`), `render/psprites.py` (`PSPRITE_SY`, `PspriteRenderer`, `draw_psprites_to_overlay`); 156 registered actions total |
 | T10.7 | Fighter weapons | T10.6 | DONE | `sim/actions/weapons_fighter.py` (`A_FPunchAttack`, `A_FAxeAttack`, `A_FHammerAttack`, `A_FHammerThrow`, `A_FSwordAttack`), 10 unit tests in `tests/unit/test_weapons_fighter.py`; 161 registered actions total |
 | T10.8 | Cleric weapons | T10.6 | DONE | `sim/actions/weapons_cleric.py` (`A_CMaceAttack`, `A_CStaffCheck`, `A_CStaffAttack`, `A_CStaffMissileSlither`, `A_CStaffInitBlink`, `A_CStaffCheckBlink`, `A_CFlameAttack`, `A_CFlamePuff`, `A_CFlameMissile`, `A_CFlameRotate`, `A_CHolyAttack`, `A_CHolyPalette`), `p_blaster_mobj_thinker` in `movement.py`, 8 unit tests in `tests/unit/test_weapons_cleric.py`; 173 registered actions total |
-| T10.9 | Mage weapons | T10.6 | TODO | |
+| T10.9 | Mage weapons | T10.6 | IN PROGRESS (Antigravity/2026-11-09) | |
 | T10.10 | Items & inventory | T10.1 | TODO | |
 | T10.11 | Environment actors | T10.1 | TODO | **M4** when all of P10 done |
 | T11.1 | SFX decode | T1.4 | DONE | `audio/sfx.py` (`decode_dmx_sfx`, 16B lead-in/out pad handling, resampling, `SfxCache`) |

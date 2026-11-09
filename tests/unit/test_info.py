@@ -135,4 +135,5 @@ def test_action_report() -> None:
     )
     assert f"Total unique actions: {len(report)}" in proc.stdout
     assert "A_Look" in proc.stdout
-    assert "STUB" in proc.stdout
+    assert "IMPLEMENTED" in proc.stdout
+    assert "Stubs:                0" in proc.stdout

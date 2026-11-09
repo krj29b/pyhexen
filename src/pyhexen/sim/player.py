@@ -196,6 +196,7 @@ class Player:
     secret_count: int = 0
     world_timer: int = 0
     cheats: int = 0
+    quake_intensity: int = 0
 
 
 def p_thrust(player: Player, angle: int, move: int) -> None:

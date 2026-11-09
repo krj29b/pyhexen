@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.angles import ANG90
-from pyhexen.core.events import MapExit, PrintMessage, SectorChanged, SoundEvent
+from pyhexen.core.events import PrintMessage, SectorChanged, SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, MAXINT
 from pyhexen.sim.info_data import MobjFlag2
 from pyhexen.sim.mobj import Mobj, remove_mobj
@@ -117,6 +117,8 @@ SPECIAL_NAMES: dict[int, str] = {
     137: "Thing_SpawnNoFog",
     138: "Floor_Waggle",
     140: "Sector_ChangeSound",
+    243: "Exit_Normal",
+    244: "Exit_Secret",
 }
 
 _HANDLERS: dict[int, SpecialHandler] = {}
@@ -538,6 +540,34 @@ def _ev_damage_thing(
     return True
 
 
+@line_special(70, "Teleport")
+def _ev_teleport(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None,
+    mo: Mobj | None,
+    side: int = 0,
+) -> bool:
+    _ = line
+    from pyhexen.sim.specials.teleport import special_teleport
+
+    return special_teleport(sim, 70, args, line, mo, side=side)
+
+
+@line_special(71, "Teleport_NoFog")
+def _ev_teleport_no_fog(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None,
+    mo: Mobj | None,
+    side: int = 0,
+) -> bool:
+    _ = line
+    from pyhexen.sim.specials.teleport import special_teleport
+
+    return special_teleport(sim, 71, args, line, mo, side=side)
+
+
 @line_special(74, "Teleport_NewMap")
 def _ev_teleport_new_map(
     sim: GameSim,
@@ -551,8 +581,9 @@ def _ev_teleport_new_map(
         return False
     if mo is not None and mo.player is not None and getattr(mo.player, "player_state", 0) == 1:
         return False
-    sim.events.emit(MapExit(next_map=args[0], position=args[1]))
-    return True
+    from pyhexen.sim.transitions import teleport_new_map
+
+    return teleport_new_map(sim, args[0], args[1])
 
 
 @line_special(75, "Teleport_EndGame")
@@ -568,11 +599,45 @@ def _ev_teleport_end_game(
         return False
     if mo is not None and mo.player is not None and getattr(mo.player, "player_state", 0) == 1:
         return False
-    if sim.deathmatch:
-        sim.events.emit(MapExit(next_map=1, position=0))
-    else:
-        sim.events.emit(MapExit(next_map=-1, position=-1))
-    return True
+    from pyhexen.sim.transitions import teleport_end_game
+
+    return teleport_end_game(sim)
+
+
+@line_special(243, "Exit_Normal")
+def _ev_exit_normal(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None,
+    mo: Mobj | None,
+    side: int = 0,
+) -> bool:
+    _ = line
+    if side != 0:
+        return False
+    if mo is not None and mo.player is not None and getattr(mo.player, "player_state", 0) == 1:
+        return False
+    from pyhexen.sim.transitions import exit_normal
+
+    return exit_normal(sim, position=args[0])
+
+
+@line_special(244, "Exit_Secret")
+def _ev_exit_secret(
+    sim: GameSim,
+    args: tuple[int, int, int, int, int],
+    line: Line | None,
+    mo: Mobj | None,
+    side: int = 0,
+) -> bool:
+    _ = line
+    if side != 0:
+        return False
+    if mo is not None and mo.player is not None and getattr(mo.player, "player_state", 0) == 1:
+        return False
+    from pyhexen.sim.transitions import exit_secret
+
+    return exit_secret(sim, position=args[0])
 
 
 @line_special(80, "ACS_Execute")

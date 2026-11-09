@@ -134,6 +134,10 @@ class GameSim:
 
         if self.timer_game > 0:
             self.timer_game -= 1
+            if self.timer_game == 0:
+                from pyhexen.sim.transitions import exit_normal
+
+                exit_normal(self, position=0)
 
         for idx, player in enumerate(self.players):
             if idx < len(cmds) and isinstance(cmds[idx], TicCmd):

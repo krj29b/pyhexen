@@ -86,7 +86,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T12.5 | Automap | T12.1, T3.2 | DONE | `ui/automap.py` (`AutoMap`, parchment background & transparent HUD overlay mode, follow mode, Cohen-Sutherland clipping, Bresenham line drawing, wall classification for 1-sided/2-sided/height changes/teleports/exits/locked doors/secrets/allmap, player arrow rotation, actor triangles, gridlines, zoom/pan/max-zoom, mouse drag & wheel), 10 unit tests in `tests/unit/test_automap.py` |
 | T12.6 | Intermission & finale | T12.1 | DONE | `ui/intermission.py` (`Intermission`, `Finale`, `TitleLoop`, hub cluster typewriter messages, deathmatch frag tally, 6-stage finale with chess board character portraits, title/advisory/credit/demo sequence), 9 unit tests in `tests/unit/test_intermission.py`; **Phase 12 complete** |
 | T13.1 | Map transitions | T7.7, T2.6 | DONE (Antigravity/2026-11-10) | `sim/transitions.py`, `sim/specials/teleport.py` (`P_Teleport`, `EV_Teleport`, `Teleport_NewMap` 74, `Teleport_EndGame` 75, `Exit_Normal` 243, `Exit_Secret` 244, warptrans resolution, target spawn position, same-cluster vs cluster change carry-over rules), 8 unit tests in `tests/unit/test_transitions.py` |
-| T13.2 | Serialization framework | P7–P10 | TODO | |
+| T13.2 | Serialization framework | P7–P10 | IN PROGRESS (Antigravity/2026-11-10) | |
 | T13.3 | Hub persistence | T13.1, T13.2, T8.4 | TODO | |
 | T13.4 | Save/load UI & files | T13.2, T12.4 | TODO | **M5** |
 | T14.1 | Demo record & determinism harness | T6.4 | TODO | can start early |

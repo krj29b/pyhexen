@@ -84,7 +84,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T12.3 | Messages | T12.1 | DONE | `ui/messages.py` (`MessageSystem`, normal & yellow/bold messages, tic expiration, multi-line) |
 | T12.4 | Menus | T12.1 | DONE | `ui/menu.py` (`MenuManager`, main, class select, skill, options, options2, controls/key rebinding, save/load slots, modal prompts, mouse & keyboard navigation, sliders, fallback patches), 12 unit tests in `tests/unit/test_menu.py` |
 | T12.5 | Automap | T12.1, T3.2 | DONE | `ui/automap.py` (`AutoMap`, parchment background & transparent HUD overlay mode, follow mode, Cohen-Sutherland clipping, Bresenham line drawing, wall classification for 1-sided/2-sided/height changes/teleports/exits/locked doors/secrets/allmap, player arrow rotation, actor triangles, gridlines, zoom/pan/max-zoom, mouse drag & wheel), 10 unit tests in `tests/unit/test_automap.py` |
-| T12.6 | Intermission & finale | T12.1 | TODO | |
+| T12.6 | Intermission & finale | T12.1 | IN PROGRESS (Antigravity/2026-11-10) | |
 | T13.1 | Map transitions | T7.7, T2.6 | TODO | |
 | T13.2 | Serialization framework | P7–P10 | TODO | |
 | T13.3 | Hub persistence | T13.1, T13.2, T8.4 | TODO | |

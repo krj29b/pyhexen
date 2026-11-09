@@ -169,6 +169,7 @@ class Mobj(Thinker):
     flags2: int = 0
     special1: Any = 0
     special2: Any = 0
+    thinker_func: Any = None
     health: int = 0
     movedir: int = 0
     movecount: int = 0
@@ -204,6 +205,9 @@ class Mobj(Thinker):
 
     def tick(self, sim: GameSim) -> None:
         """Port of P_MobjThinker (p_mobj.c)."""
+        if self.thinker_func is not None:
+            self.thinker_func(sim, self)
+            return
         from pyhexen.sim.movement import p_mobj_thinker
 
         p_mobj_thinker(sim, self)

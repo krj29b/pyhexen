@@ -170,6 +170,7 @@ class Player:
     poisoncount: int = 0
     extralight: int = 0
     fixedcolormap: int = 0
+    palette: int = 0
     attacker: Mobj | None = None
     morph_tics: int = 0
     secret_count: int = 0

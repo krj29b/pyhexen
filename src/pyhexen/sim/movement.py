@@ -331,3 +331,62 @@ def p_mobj_thinker(sim: GameSim, mobj: Mobj) -> None:
         mobj.tics -= 1
         if mobj.tics == 0:
             set_mobj_state(sim, mobj, mobj.state.next_state)
+
+
+def p_blaster_mobj_thinker(sim: GameSim, mobj: Mobj) -> None:
+    """Port of P_BlasterMobjThinker (p_mobj.c:925).
+
+    Advances high-speed missiles (MT_CFLAME_MISSILE, MT_MWAND_MISSILE) in 8
+    sub-steps per tic to prevent tunneling through targets or geometry.
+    """
+    mobj.capture_prev_state()
+
+    # Handle movement
+    if mobj.momx != 0 or mobj.momy != 0 or (mobj.z != mobj.floorz) or mobj.momz != 0:
+        xfrac = mobj.momx >> 3
+        yfrac = mobj.momy >> 3
+        zfrac = mobj.momz >> 3
+        changexy = (xfrac != 0) or (yfrac != 0)
+
+        for _ in range(8):
+            if changexy:
+                if not try_move(sim, mobj, mobj.x + xfrac, mobj.y + yfrac):
+                    explode_missile(sim, mobj)
+                    return
+            mobj.z += zfrac
+            if mobj.z <= mobj.floorz:
+                mobj.z = mobj.floorz
+                explode_missile(sim, mobj)
+                return
+            if mobj.z + mobj.height > mobj.ceilingz:
+                mobj.z = mobj.ceilingz - mobj.height
+                explode_missile(sim, mobj)
+                return
+
+            if changexy:
+                if mobj.type == MobjType.MT_MWAND_MISSILE and (sim.rng.p_random() < 128):
+                    z = mobj.z - 8 * FRACUNIT
+                    if z < mobj.floorz:
+                        z = mobj.floorz
+                    from pyhexen.sim.mobj import spawn_mobj
+
+                    spawn_mobj(sim, mobj.x, mobj.y, z, MobjType.MT_MWANDSMOKE)
+                elif mobj.type != MobjType.MT_MWAND_MISSILE:
+                    mobj.special1 = (mobj.special1 if isinstance(mobj.special1, int) else 0) - 1
+                    if mobj.special1 <= 0:
+                        mobj.special1 = 4
+                        z = mobj.z - 12 * FRACUNIT
+                        if z < mobj.floorz:
+                            z = mobj.floorz
+                        from pyhexen.sim.mobj import spawn_mobj
+
+                        mo = spawn_mobj(sim, mobj.x, mobj.y, z, MobjType.MT_CFLAMEFLOOR)
+                        if mo is not None:
+                            mo.angle = mobj.angle
+
+    # Advance the state
+    if mobj.tics != -1:
+        mobj.tics -= 1
+        while mobj.tics == 0:
+            if not set_mobj_state(sim, mobj, mobj.state.next_state):
+                return

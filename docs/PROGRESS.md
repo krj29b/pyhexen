@@ -83,7 +83,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T12.2 | Status bar & inventory bar | T12.1, T10.10 | DONE | `ui/statusbar.py` (`StatusBar`, health gem/numbers, mana gauges/vials, armor, weapon pieces, ready artifact & activation flash, popup inventory bar, key bar, fullscreen HUD, animated powerup icons, palette flash), 12 unit tests in `tests/unit/test_statusbar.py` |
 | T12.3 | Messages | T12.1 | DONE | `ui/messages.py` (`MessageSystem`, normal & yellow/bold messages, tic expiration, multi-line) |
 | T12.4 | Menus | T12.1 | DONE | `ui/menu.py` (`MenuManager`, main, class select, skill, options, options2, controls/key rebinding, save/load slots, modal prompts, mouse & keyboard navigation, sliders, fallback patches), 12 unit tests in `tests/unit/test_menu.py` |
-| T12.5 | Automap | T12.1, T3.2 | TODO | |
+| T12.5 | Automap | T12.1, T3.2 | IN PROGRESS (Antigravity/2026-11-10) | |
 | T12.6 | Intermission & finale | T12.1 | TODO | |
 | T13.1 | Map transitions | T7.7, T2.6 | TODO | |
 | T13.2 | Serialization framework | P7–P10 | TODO | |

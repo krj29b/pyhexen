@@ -72,7 +72,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T10.7 | Fighter weapons | T10.6 | DONE | `sim/actions/weapons_fighter.py` (`A_FPunchAttack`, `A_FAxeAttack`, `A_FHammerAttack`, `A_FHammerThrow`, `A_FSwordAttack`), 10 unit tests in `tests/unit/test_weapons_fighter.py`; 161 registered actions total |
 | T10.8 | Cleric weapons | T10.6 | DONE | `sim/actions/weapons_cleric.py` (`A_CMaceAttack`, `A_CStaffCheck`, `A_CStaffAttack`, `A_CStaffMissileSlither`, `A_CStaffInitBlink`, `A_CStaffCheckBlink`, `A_CFlameAttack`, `A_CFlamePuff`, `A_CFlameMissile`, `A_CFlameRotate`, `A_CHolyAttack`, `A_CHolyPalette`), `p_blaster_mobj_thinker` in `movement.py`, 8 unit tests in `tests/unit/test_weapons_cleric.py`; 173 registered actions total |
 | T10.9 | Mage weapons | T10.6 | DONE | `sim/actions/weapons_mage.py` (`A_MWandAttack`, `A_FireConePL1`, `A_ShedShard`, `A_LightningReady`, `A_LightningClip`, `A_LightningZap`, `A_MLightningAttack`, `A_MLightningAttack2`, `A_ZapMimic`, `A_LastZap`, `A_LightningRemove`, `A_MStaffAttack`, `A_MStaffPalette`), 6 unit tests in `tests/unit/test_weapons_mage.py`; 186 registered actions total |
-| T10.10 | Items & inventory | T10.1 | TODO | |
+| T10.10 | Items & inventory | T10.1 | IN PROGRESS (Antigravity/2026-11-09) | |
 | T10.11 | Environment actors | T10.1 | TODO | **M4** when all of P10 done |
 | T11.1 | SFX decode | T1.4 | DONE | `audio/sfx.py` (`decode_dmx_sfx`, 16B lead-in/out pad handling, resampling, `SfxCache`) |
 | T11.2 | Sound system | T11.1, T2.7, T5.3 | DONE | `audio/channels.py` (`SoundSystem`, channel limits, distance attenuation, stereo pan, moving origin tracking) |

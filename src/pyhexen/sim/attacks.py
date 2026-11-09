@@ -362,6 +362,143 @@ def spawn_missile_angle_speed(
     return mo if check_missile_spawn(sim, mo) else None
 
 
+def spawn_player_missile(
+    sim: GameSim,
+    source: Mobj,
+    missile_type: MobjType | int,
+) -> Mobj | None:
+    """Port of P_SpawnPlayerMissile (p_mobj.c:2220).
+
+    Tries to aim at a nearby monster within 16*64 units, falling back to player lookdir.
+    """
+    mtype = MobjType(missile_type)
+    an = source.angle & 0xFFFFFFFF
+    slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+    if sim.linetarget is None:
+        an = (an + (1 << 26)) & 0xFFFFFFFF
+        slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+        if sim.linetarget is None:
+            an = (an - (2 << 26)) & 0xFFFFFFFF
+            slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+        if sim.linetarget is None:
+            an = source.angle & 0xFFFFFFFF
+            lookdir = source.player.lookdir if source.player is not None else 0
+            slope = c_div(lookdir << FRACBITS, 173)
+
+    x = source.x
+    y = source.y
+    if mtype == MobjType.MT_LIGHTNING_FLOOR:
+        z = ONFLOORZ
+        slope = 0
+    elif mtype == MobjType.MT_LIGHTNING_CEILING:
+        from pyhexen.sim.mobj import ONCEILINGZ
+
+        z = ONCEILINGZ
+        slope = 0
+    else:
+        lookdir = source.player.lookdir if source.player is not None else 0
+        z = source.z + 4 * 8 * FRACUNIT + c_div(lookdir << FRACBITS, 173)
+        z -= source.floorclip
+
+    th = spawn_mobj(sim, x, y, z, mtype)
+    th.target = source
+    th.angle = an
+    an_fine = (an >> ANGLETOFINESHIFT) & FINEMASK
+    th.momx = fixed_mul(th.info.speed, fine_cosine(an_fine))
+    th.momy = fixed_mul(th.info.speed, fine_sine(an_fine))
+    th.momz = fixed_mul(th.info.speed, slope)
+
+    if mtype in (MobjType.MT_MWAND_MISSILE, MobjType.MT_CFLAME_MISSILE):
+        th.x += th.momx >> 3
+        th.y += th.momy >> 3
+        th.z += th.momz >> 3
+    else:
+        th.x += th.momx >> 1
+        th.y += th.momy >> 1
+        th.z += th.momz >> 1
+
+    from pyhexen.sim.map import try_move
+    from pyhexen.sim.movement import explode_missile
+
+    if not try_move(sim, th, th.x, th.y):
+        explode_missile(sim, th)
+        return None
+    return th
+
+
+def spm_angle(
+    sim: GameSim,
+    source: Mobj,
+    missile_type: MobjType | int,
+    angle: int,
+) -> Mobj | None:
+    """Port of P_SPMAngle (p_mobj.c:2346)."""
+    mtype = MobjType(missile_type)
+    an = angle & 0xFFFFFFFF
+    slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+    if sim.linetarget is None:
+        an = (an + (1 << 26)) & 0xFFFFFFFF
+        slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+        if sim.linetarget is None:
+            an = (an - (2 << 26)) & 0xFFFFFFFF
+            slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+        if sim.linetarget is None:
+            an = angle & 0xFFFFFFFF
+            lookdir = source.player.lookdir if source.player is not None else 0
+            slope = c_div(lookdir << FRACBITS, 173)
+
+    x = source.x
+    y = source.y
+    lookdir = source.player.lookdir if source.player is not None else 0
+    z = source.z + 4 * 8 * FRACUNIT + c_div(lookdir << FRACBITS, 173)
+    z -= source.floorclip
+
+    th = spawn_mobj(sim, x, y, z, mtype)
+    th.target = source
+    th.angle = an
+    an_fine = (an >> ANGLETOFINESHIFT) & FINEMASK
+    th.momx = fixed_mul(th.info.speed, fine_cosine(an_fine))
+    th.momy = fixed_mul(th.info.speed, fine_sine(an_fine))
+    th.momz = fixed_mul(th.info.speed, slope)
+    return th if check_missile_spawn(sim, th) else None
+
+
+def spm_angle_xyz(
+    sim: GameSim,
+    source: Mobj,
+    x: int,
+    y: int,
+    z: int,
+    missile_type: MobjType | int,
+    angle: int,
+) -> Mobj | None:
+    """Port of P_SPMAngleXYZ (p_mobj.c:2396)."""
+    mtype = MobjType(missile_type)
+    an = angle & 0xFFFFFFFF
+    slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+    if sim.linetarget is None:
+        an = (an + (1 << 26)) & 0xFFFFFFFF
+        slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+        if sim.linetarget is None:
+            an = (an - (2 << 26)) & 0xFFFFFFFF
+            slope = aim_line_attack(sim, source, an, 16 * 64 * FRACUNIT)
+        if sim.linetarget is None:
+            an = angle & 0xFFFFFFFF
+            lookdir = source.player.lookdir if source.player is not None else 0
+            slope = c_div(lookdir << FRACBITS, 173)
+
+    lookdir = source.player.lookdir if source.player is not None else 0
+    spawn_z = z + 4 * 8 * FRACUNIT + c_div(lookdir << FRACBITS, 173) - source.floorclip
+    th = spawn_mobj(sim, x, y, spawn_z, mtype)
+    th.target = source
+    th.angle = an
+    an_fine = (an >> ANGLETOFINESHIFT) & FINEMASK
+    th.momx = fixed_mul(th.info.speed, fine_cosine(an_fine))
+    th.momy = fixed_mul(th.info.speed, fine_sine(an_fine))
+    th.momz = fixed_mul(th.info.speed, slope)
+    return th if check_missile_spawn(sim, th) else None
+
+
 def spawn_puff(
     sim: GameSim,
     x: int,
@@ -588,11 +725,12 @@ def line_attack(
     slope: int,
     damage: int,
     puff_type: MobjType | int = MobjType.MT_PUNCHPUFF,
-) -> None:
+) -> Mobj | None:
     """Port of P_LineAttack (p_map.c).
 
     Fires hitscan ray along angle and slope. Inflicts damage via damage_mobj, activates impact
-    lines, spawns puffs and blood splatters, and emits sound events.
+    lines, spawns puffs and blood splatters, and emits sound events. Returns the spawned puff
+    (PuffSpawned in C) or None.
     """
     m_puff_type = MobjType(puff_type)
     angle_fine = ((angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT) & FINEMASK
@@ -601,11 +739,13 @@ def line_attack(
     shootz = t1.z + (t1.height >> 1) + 8 * FRACUNIT - t1.floorclip
     attackrange = distance
     aimslope = slope
+    spawned_puff: Mobj | None = None
 
     from pyhexen.sim.inter import damage_mobj
     from pyhexen.sim.line_activation import p_activate_line
 
     def shoot_traverse(in_intercept: Intercept) -> bool:
+        nonlocal spawned_puff
         if in_intercept.is_aline:
             li = in_intercept.line
             if li is None:
@@ -670,7 +810,7 @@ def line_attack(
         if hasattr(sim, "map_state"):
             sim.map_state.linetarget = th
 
-        spawn_puff(sim, hit_x, hit_y, hit_z, puff_type=m_puff_type, linetarget=th)
+        spawned_puff = spawn_puff(sim, hit_x, hit_y, hit_z, puff_type=m_puff_type, linetarget=th)
 
         if damage > 0:
             if not (th.flags & MobjFlag.MF_NOBLOOD) and not (
@@ -693,6 +833,7 @@ def line_attack(
         return False
 
     def _hit_line(in_intercept: Intercept, li) -> bool:
+        nonlocal spawned_puff
         # Hit line setback = 4 * FRACUNIT / attackrange
         setback = fixed_div(4 * FRACUNIT, attackrange) if attackrange > 0 else 0
         frac = in_intercept.frac - setback
@@ -709,7 +850,7 @@ def line_attack(
         sim.linetarget = None
         if hasattr(sim, "map_state"):
             sim.map_state.linetarget = None
-        spawn_puff(sim, hit_x, hit_y, hit_z, puff_type=m_puff_type, linetarget=None)
+        spawned_puff = spawn_puff(sim, hit_x, hit_y, hit_z, puff_type=m_puff_type, linetarget=None)
         return False
 
     if sim.level is not None:
@@ -770,7 +911,7 @@ def line_attack(
                 )
             )
         elif m_puff_type == MobjType.MT_FLAMEPUFF:
-            spawn_puff(
+            spawned_puff = spawn_puff(
                 sim,
                 x2,
                 y2,
@@ -778,6 +919,8 @@ def line_attack(
                 puff_type=m_puff_type,
                 linetarget=None,
             )
+
+    return spawned_puff
 
 
 def radius_attack(

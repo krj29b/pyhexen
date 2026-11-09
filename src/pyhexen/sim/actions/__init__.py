@@ -28,6 +28,7 @@ def _ensure_actions_loaded() -> None:
         import pyhexen.sim.actions.monsters_bosses  # noqa: F401
         import pyhexen.sim.actions.monsters_casters  # noqa: F401
         import pyhexen.sim.actions.monsters_common  # noqa: F401
+        import pyhexen.sim.actions.weapons_fighter  # noqa: F401
         import pyhexen.sim.enemy  # noqa: F401
         import pyhexen.sim.psprites  # noqa: F401
 

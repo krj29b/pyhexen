@@ -80,7 +80,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T11.4 | MUS→MIDI | T1.4 | DONE | `audio/mus2mid.py` (`mus_to_midi` Format 0 MIDI converter validated with `mido`) |
 | T11.5 | Music backend | T11.4, T2.6 | DONE | `audio/music.py` (`MusicManager`, `PygameMidiBackend`, `FluidSynthBackend`, `NullMusicBackend`) |
 | T12.1 | Fonts & 2D overlay | T4.2 | DONE | `ui/fonts.py` (`BitmapFont`, `FontSet`), `render/overlay2d.py` (`Overlay2D` 320x200 canvas + 4:3 GPU palette shader) |
-| T12.2 | Status bar & inventory bar | T12.1, T10.10 | TODO | |
+| T12.2 | Status bar & inventory bar | T12.1, T10.10 | IN PROGRESS (Antigravity/2026-11-09) | |
 | T12.3 | Messages | T12.1 | DONE | `ui/messages.py` (`MessageSystem`, normal & yellow/bold messages, tic expiration, multi-line) |
 | T12.4 | Menus | T12.1 | TODO | |
 | T12.5 | Automap | T12.1, T3.2 | TODO | |

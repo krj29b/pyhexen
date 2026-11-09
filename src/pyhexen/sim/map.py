@@ -275,6 +275,10 @@ def pit_check_thing(sim: GameSim, thing: Mobj) -> bool:
         return False
 
     if thing.flags & MobjFlag.MF_SPECIAL:
+        if tmthing.flags & MobjFlag.MF_PICKUP:
+            from pyhexen.sim.artifacts import touch_special_thing
+
+            touch_special_thing(sim, thing, tmthing)
         return not bool(thing.flags & MobjFlag.MF_SOLID)
 
     return not bool(thing.flags & MobjFlag.MF_SOLID)

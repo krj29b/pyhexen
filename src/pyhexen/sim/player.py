@@ -29,6 +29,8 @@ from pyhexen.core.angles import (
 from pyhexen.core.fixed import FRACUNIT, abs32, c_div, fixed_mul, to_uint32
 from pyhexen.core.ticcmd import (
     AFLAG_JUMP,
+    AFLAG_MASK,
+    AFLAG_SUICIDE,
     BT_CHANGE,
     BT_SPECIAL,
     BT_USE,
@@ -131,6 +133,17 @@ PLAYER_MOBJ_TYPES: tuple[int, ...] = (
 
 
 @dataclass(slots=True)
+class InventorySlot:
+    """Single inventory item slot.
+
+    Port of inventory_t (h2def.h).
+    """
+
+    type: int = 0
+    count: int = 0
+
+
+@dataclass(slots=True)
 class Player:
     """Player state structure.
 
@@ -140,6 +153,7 @@ class Player:
     mo: Mobj | None = None
     player_state: PlayerState = PlayerState.PST_LIVE
     player_class: int = int(PlayerClass.PCLASS_FIGHTER)
+    original_class: int = int(PlayerClass.PCLASS_FIGHTER)
     cmd: TicCmd = field(default_factory=TicCmd)
     viewz: int = 0
     prev_viewz: int = 0
@@ -163,11 +177,17 @@ class Player:
     centering: bool = False
     flyheight: int = 0
     powers: list[int] = field(default_factory=lambda: [0] * NUMPOWERS)
+    inventory: list[InventorySlot] = field(default_factory=list)
+    ready_artifact: int = 0
+    artifact_count: int = 0
+    inv_ptr: int = 0
     message: str = ""
     message_tics: int = 0
+    yellow_message: bool = False
     damagecount: int = 0
     bonuscount: int = 0
     poisoncount: int = 0
+    poisoner: Mobj | None = None
     extralight: int = 0
     fixedcolormap: int = 0
     palette: int = 0
@@ -341,6 +361,19 @@ def p_move_player(sim: GameSim, player: Player) -> None:
         mo.flags2 &= ~MobjFlag2.MF2_ONMOBJ
         player.jump_tics = 18
 
+    if (
+        player.powers[PW_SPEED]
+        and not (sim.level_time & 1)
+        and (abs32(mo.momx) + abs32(mo.momy) > 12 * FRACUNIT)
+    ):
+        speed_mo = spawn_mobj(sim, mo.x, mo.y, mo.z, MobjType.MT_PLAYER_SPEED)
+        if speed_mo is not None:
+            speed_mo.angle = mo.angle
+            speed_mo.target = mo
+            speed_mo.special1 = player.player_class if player.player_class <= 2 else 0
+            speed_mo.sprite = mo.sprite
+            speed_mo.floorclip = mo.floorclip
+
 
 def p_death_think(sim: GameSim, player: Player) -> None:
     """Lower viewheight on death, face attacker, and trigger reborn on `BT_USE`.
@@ -469,13 +502,101 @@ def p_player_think(sim: GameSim, player: Player) -> None:
     else:
         player.usedown = False
 
+    # Artifact commands
+    if cmd.arti:
+        onground = (mo.z <= mo.floorz) or bool(mo.flags2 & MobjFlag2.MF2_ONMOBJ)
+        if (cmd.arti & AFLAG_JUMP) and onground and player.jump_tics == 0:
+            mo.momz = 6 * FRACUNIT if player.morph_tics else 9 * FRACUNIT
+            mo.flags2 &= ~MobjFlag2.MF2_ONMOBJ
+            player.jump_tics = 18
+        elif cmd.arti & AFLAG_SUICIDE:
+            from pyhexen.sim.inter import damage_mobj
+
+            damage_mobj(sim, mo, None, None, 10000)
+
+        from pyhexen.sim.artifacts import ArtiType, player_use_artifact
+
+        if cmd.arti == ArtiType.NUMARTIFACTS:
+            for i in range(1, ArtiType.ARTI_FIRSTPUZZITEM):
+                player_use_artifact(sim, player, i)
+        else:
+            arti = cmd.arti & AFLAG_MASK
+            if arti:
+                player_use_artifact(sim, player, arti)
+
+    # Morph counter
+    if player.morph_tics > 0:
+        from pyhexen.sim.artifacts import p_morph_player_think, undo_player_morph
+
+        p_morph_player_think(sim, player)
+        player.morph_tics -= 1
+        if player.morph_tics == 0:
+            undo_player_morph(sim, player)
+
     p_move_psprites(sim, player)
+
+    # Power countdowns
+    if player.powers[PW_INVULNERABILITY] > 0:
+        if player.player_class == int(PlayerClass.PCLASS_CLERIC):
+            if (
+                not (sim.level_time & 7)
+                and (mo.flags & MobjFlag.MF_SHADOW)
+                and not (mo.flags2 & MobjFlag2.MF2_DONTDRAW)
+            ):
+                mo.flags &= ~MobjFlag.MF_SHADOW
+                if not (mo.flags & MobjFlag.MF_ALTSHADOW):
+                    mo.flags2 |= MobjFlag2.MF2_DONTDRAW | MobjFlag2.MF2_NONSHOOTABLE
+            if not (sim.level_time & 31):
+                if mo.flags2 & MobjFlag2.MF2_DONTDRAW:
+                    if not (mo.flags & MobjFlag.MF_SHADOW):
+                        mo.flags |= MobjFlag.MF_SHADOW | MobjFlag.MF_ALTSHADOW
+                    else:
+                        mo.flags2 &= ~(MobjFlag2.MF2_DONTDRAW | MobjFlag2.MF2_NONSHOOTABLE)
+                else:
+                    mo.flags |= MobjFlag.MF_SHADOW
+                    mo.flags &= ~MobjFlag.MF_ALTSHADOW
+
+        player.powers[PW_INVULNERABILITY] -= 1
+        if player.powers[PW_INVULNERABILITY] == 0:
+            mo.flags2 &= ~(MobjFlag2.MF2_INVULNERABLE | MobjFlag2.MF2_REFLECTIVE)
+            if player.player_class == int(PlayerClass.PCLASS_CLERIC):
+                mo.flags2 &= ~(MobjFlag2.MF2_DONTDRAW | MobjFlag2.MF2_NONSHOOTABLE)
+                mo.flags &= ~(MobjFlag.MF_SHADOW | MobjFlag.MF_ALTSHADOW)
+
+    if player.powers[PW_MINOTAUR] > 0:
+        player.powers[PW_MINOTAUR] -= 1
+
+    if player.powers[PW_INFRARED] > 0:
+        player.powers[PW_INFRARED] -= 1
+
+    if player.powers[PW_FLIGHT] > 0:
+        player.powers[PW_FLIGHT] -= 1
+        if player.powers[PW_FLIGHT] == 0:
+            mo.flags2 &= ~MobjFlag2.MF2_FLY
+            mo.flags &= ~MobjFlag.MF_NOGRAVITY
+
+    if player.powers[PW_SPEED] > 0:
+        player.powers[PW_SPEED] -= 1
 
     if player.damagecount > 0:
         player.damagecount -= 1
 
     if player.bonuscount > 0:
         player.bonuscount -= 1
+
+    if player.poisoncount > 0 and not (sim.level_time & 15):
+        player.poisoncount = max(0, player.poisoncount - 5)
+        from pyhexen.sim.inter import poison_damage
+
+        poison_damage(sim, player, player.poisoner, 1, True)
+
+    if player.powers[PW_INFRARED] > 0:
+        if player.powers[PW_INFRARED] <= 140:
+            player.fixedcolormap = 0 if (player.powers[PW_INFRARED] & 8) else 1
+        else:
+            player.fixedcolormap = 1
+    else:
+        player.fixedcolormap = 0
 
 
 def spawn_player(
@@ -515,6 +636,7 @@ def spawn_player(
         mo=mo,
         player_state=PlayerState.PST_LIVE,
         player_class=pclass,
+        original_class=pclass,
         viewz=mo.z + VIEWHEIGHT,
         prev_viewz=mo.z + VIEWHEIGHT,
         viewheight=VIEWHEIGHT,

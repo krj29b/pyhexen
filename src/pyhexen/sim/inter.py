@@ -159,19 +159,31 @@ def _resolve_mobj(obj: Any) -> Mobj | None:
 
 
 def auto_use_health(sim: GameSim, player: Player, save_health: int) -> None:
-    """Port of P_AutoUseHealth (p_inter.c). Stubbed until inventory artifact system."""
+    """Port of P_AutoUseHealth (p_inter.c)."""
+    from pyhexen.sim.artifacts import auto_use_health as _auto_use_health
+
+    _auto_use_health(sim, player, save_health)
 
 
 def morph_player(sim: GameSim, player: Player) -> None:
-    """Port of P_MorphPlayer (p_inter.c). Stubbed until pig morph system."""
+    """Port of P_MorphPlayer (p_inter.c)."""
+    from pyhexen.sim.artifacts import morph_player as _morph_player
+
+    _morph_player(sim, player)
 
 
 def morph_monster(sim: GameSim, monster: Mobj) -> None:
-    """Port of P_MorphMonster (p_inter.c). Stubbed until pig morph system."""
+    """Port of P_MorphMonster (p_inter.c)."""
+    from pyhexen.sim.artifacts import morph_monster as _morph_monster
+
+    _morph_monster(sim, monster)
 
 
 def teleport_other(sim: GameSim, victim: Mobj) -> None:
-    """Port of P_TeleportOther (p_inter.c). Stubbed until artifact system."""
+    """Port of P_TeleportOther (p_inter.c)."""
+    from pyhexen.sim.artifacts import teleport_other as _teleport_other
+
+    _teleport_other(sim, victim)
 
 
 def minotaur_slam(sim: GameSim, source: Mobj, target: Mobj) -> None:

@@ -93,7 +93,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T14.2 | Options | T12.4 | DONE (Antigravity/2026-11-10) | Configurable video & controls options (resolution, fullscreen, FOV, authentic low-res mode, pixel-aspect correction, true pitch vs shear, filtering, mouse sensitivity & invert, keybindings), `config.toml` persistence, `MenuType.VIDEO` submenu, live apply callback; 6 unit tests in `tests/unit/test_options.py` |
 | T14.3 | Performance pass | M4 | DONE (Antigravity/2026-11-10) | `tools/profile_perf.py`; converted `MobjFlag`/`MobjFlag2` from `IntFlag` to int constants (sim 7.85 ms -> 1.94 ms); cached action invokers eliminating `inspect.signature`; chunk frustum culling & VAO caching; sprite dynamic VBO/VAO & struct packing; sky shader uniform batching; MAP01: sim 2.06 ms/tic (budget <10 ms), render 6.67 ms/frame (budget <8 ms); MAP03: 2.20 ms / 4.53 ms; MAP40: 1.04 ms / 7.99 ms |
 | T14.4 | Packaging | M5 | DONE (Antigravity/2026-11-10) | `pyhexen.spec` (Windows onedir build, GLSL shaders and config template datas, strict `*.wad` exclusion), `app/dialog.py` (first-run GUI/CLI IWAD locator and lump validator), `app/crash.py` (crash report and unhandled exception guard writing `crash.log`), 13 unit tests in `tests/unit/test_packaging.py` |
-| T14.5 | Full playthrough | all | TODO | **M6** |
+| T14.5 | Full playthrough | all | IN PROGRESS (Antigravity/2026-11-10) | **M6** |
 
 ## Session log
 <!-- Append: date · agent · task(s) · one-line summary -->

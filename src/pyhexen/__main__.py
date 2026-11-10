@@ -14,6 +14,8 @@ import pygame
 
 from pyhexen import __version__
 from pyhexen.app.config import Config, load_config, resolve_iwad
+from pyhexen.app.crash import crash_guard
+from pyhexen.app.dialog import prompt_for_iwad, show_error_dialog
 from pyhexen.app.input import InputHandler
 from pyhexen.app.main_loop import FixedTimestepAccumulator
 from pyhexen.render.camera import Camera
@@ -87,29 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the PyHexen CLI entry point."""
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    iwad_path = resolve_iwad(args.iwad)
-    if (
-        not args.warp
-        and not args.fly
-        and not args.headless_frames
-        and not args.record
-        and not args.playdemo
-        and not args.timedemo
-    ):
-        print(f"pyhexen {__version__}")
-        if iwad_path is None:
-            print("Note: No HEXEN.WAD found. Use --iwad <path> or set PYHEXEN_IWAD.")
-        return 0
-
-    if iwad_path is None:
-        print("Error: HEXEN.WAD could not be located. Specify --iwad <path>.")
-        return 1
-
+def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
+    """Initialize game simulation and run the main rendering/game loop."""
     config = load_config()
     stack = WadStack(iwad_path)
     if args.file:
@@ -404,6 +385,33 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ctx.close()
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the PyHexen CLI entry point."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    iwad_path = resolve_iwad(args.iwad)
+    if iwad_path is None and not args.headless_frames:
+        iwad_path = prompt_for_iwad()
+
+    if iwad_path is None:
+        msg = "Error: HEXEN.WAD could not be located. Specify --iwad <path> or set PYHEXEN_IWAD."
+        print(msg)
+        if not args.headless_frames:
+            show_error_dialog("HEXEN.WAD Not Found", msg)
+        return 1
+
+    context_info = {
+        "warp": str(args.warp),
+        "skill": str(args.skill),
+        "player_class": str(args.player_class),
+        "fly": str(args.fly),
+        "iwad": str(iwad_path),
+    }
+    with crash_guard(context_info=context_info, show_dialog=not args.headless_frames):
+        return _run_game(args, iwad_path)
 
 
 if __name__ == "__main__":

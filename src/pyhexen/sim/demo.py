@@ -21,9 +21,15 @@ from pyhexen.core.ticcmd import TicCmd
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
+    from pyhexen.wad.wadfile import WadFile, WadStack
 
 DEMO_MAGIC: bytes = b"PXDM"  # PyHexen Demo
 DEMO_VERSION: int = 1
+DEMOMARKER: int = 0x80
+
+DEMOHEADER_RESPAWN: int = 0x20
+DEMOHEADER_LONGTICS: int = 0x10
+DEMOHEADER_NOMONSTERS: int = 0x02
 
 _TICCMD_STRUCT = struct.Struct("<bbhhBBBB")
 
@@ -86,6 +92,164 @@ def unpack_ticcmd(data: bytes | bytearray) -> TicCmd:
         lookfly=lookfly,
         arti=arti,
     )
+
+
+@dataclass(slots=True)
+class VanillaDemoHeader:
+    """Header metadata for a vanilla 1995 Hexen demo lump (DEMO1..3)."""
+
+    skill: int  # 0..4 (sk_baby..sk_nightmare)
+    episode: int  # Typically 1
+    map_num: int  # 1..99
+    longtics: bool = False
+    respawn: bool = False
+    nomonsters: bool = False
+    players: list[tuple[bool, int]] = field(default_factory=list)  # (in_game, player_class)
+
+
+@dataclass(slots=True)
+class VanillaDemo:
+    """A vanilla 1995 Hexen demo containing raw header and per-tic commands."""
+
+    header: VanillaDemoHeader
+    tics: list[tuple[TicCmd, ...]] = field(default_factory=list)
+
+
+def decode_vanilla_demo(data: bytes | bytearray | memoryview) -> VanillaDemo:
+    """Parse a vanilla Hexen 1995 demo lump (e.g. DEMO1..3) or file.
+
+    Port of G_TimeDemo / G_ReadDemoTiccmd (g_game.c:1963-2280).
+    """
+    buf = memoryview(data)
+    total_len = len(buf)
+    if total_len < 12:
+        raise DemoError(f"Vanilla demo data too short: {total_len} bytes (minimum 12)")
+
+    skill = int(buf[0])
+    episode = int(buf[1])
+    map_num = int(buf[2])
+
+    p0_byte = int(buf[3])
+    longtics = bool(p0_byte & DEMOHEADER_LONGTICS)
+    respawn = bool(p0_byte & DEMOHEADER_RESPAWN)
+    nomonsters = bool(p0_byte & DEMOHEADER_NOMONSTERS)
+    p0_ingame = bool(p0_byte & 1)
+    p0_class = int(buf[4])
+
+    players: list[tuple[bool, int]] = [(p0_ingame, p0_class)]
+    for i in range(1, 4):
+        offset = 3 + i * 2
+        in_game = bool(buf[offset])
+        pclass = int(buf[offset + 1])
+        players.append((in_game, pclass))
+
+    hdr = VanillaDemoHeader(
+        skill=skill,
+        episode=episode,
+        map_num=map_num,
+        longtics=longtics,
+        respawn=respawn,
+        nomonsters=nomonsters,
+        players=players,
+    )
+
+    active_players = max(1, len([p for p in players if p[0]]))
+    offset = 11
+    tics: list[tuple[TicCmd, ...]] = []
+
+    while offset < total_len:
+        if buf[offset] == DEMOMARKER:
+            break
+        cmds: list[TicCmd] = []
+        for _ in range(active_players):
+            if offset >= total_len or buf[offset] == DEMOMARKER:
+                break
+            fwd = int.from_bytes(buf[offset : offset + 1], "little", signed=True)
+            side = int.from_bytes(buf[offset + 1 : offset + 2], "little", signed=True)
+            offset += 2
+
+            if longtics:
+                if offset + 2 > total_len:
+                    break
+                angleturn = int.from_bytes(buf[offset : offset + 2], "little", signed=True)
+                offset += 2
+            else:
+                if offset + 1 > total_len:
+                    break
+                angle_byte = int(buf[offset])
+                raw_angle = (angle_byte << 8) & 0xFFFF
+                angleturn = raw_angle if raw_angle < 0x8000 else raw_angle - 0x10000
+                offset += 1
+
+            if offset + 3 > total_len:
+                break
+            buttons = int(buf[offset])
+            lookfly = int(buf[offset + 1])
+            arti = int(buf[offset + 2])
+            offset += 3
+
+            cmds.append(
+                TicCmd(
+                    forwardmove=fwd,
+                    sidemove=side,
+                    angleturn=angleturn,
+                    buttons=buttons,
+                    lookfly=lookfly,
+                    arti=arti,
+                )
+            )
+
+        if len(cmds) == active_players:
+            tics.append(tuple(cmds))
+
+    return VanillaDemo(header=hdr, tics=tics)
+
+
+def encode_vanilla_demo(vdemo: VanillaDemo) -> bytes:
+    """Serialize a VanillaDemo into the original 1995 Hexen binary format."""
+    out = bytearray()
+    out.append(vdemo.header.skill & 0xFF)
+    out.append(vdemo.header.episode & 0xFF)
+    out.append(vdemo.header.map_num & 0xFF)
+
+    p0_flags = 1 if (vdemo.header.players and vdemo.header.players[0][0]) else 0
+    if vdemo.header.respawn:
+        p0_flags |= DEMOHEADER_RESPAWN
+    if vdemo.header.longtics:
+        p0_flags |= DEMOHEADER_LONGTICS
+    if vdemo.header.nomonsters:
+        p0_flags |= DEMOHEADER_NOMONSTERS
+    out.append(p0_flags)
+
+    p0_class = vdemo.header.players[0][1] if vdemo.header.players else 0
+    out.append(p0_class & 0xFF)
+
+    for i in range(1, 4):
+        if i < len(vdemo.header.players):
+            in_g, pcls = vdemo.header.players[i]
+            out.append(1 if in_g else 0)
+            out.append(pcls & 0xFF)
+        else:
+            out.extend([0, 0])
+
+    active_count = max(1, len([p for p in vdemo.header.players if p[0]]))
+    for cmd_tuple in vdemo.tics:
+        for idx in range(min(active_count, len(cmd_tuple))):
+            cmd = cmd_tuple[idx]
+            fwd = max(-128, min(127, cmd.forwardmove))
+            side = max(-128, min(127, cmd.sidemove))
+            out.append(fwd & 0xFF)
+            out.append(side & 0xFF)
+            if vdemo.header.longtics:
+                out.extend(struct.pack("<h", max(-32768, min(32767, cmd.angleturn))))
+            else:
+                out.append((cmd.angleturn >> 8) & 0xFF)
+            out.append(cmd.buttons & 0xFF)
+            out.append(cmd.lookfly & 0xFF)
+            out.append(cmd.arti & 0xFF)
+
+    out.append(DEMOMARKER)
+    return bytes(out)
 
 
 @dataclass(slots=True)
@@ -205,6 +369,28 @@ class Demo:
 
         return cls(header=header, tics=tics)
 
+    @classmethod
+    def from_vanilla(cls, vdemo: VanillaDemo) -> Demo:
+        """Convert a VanillaDemo into a PyHexen Demo instance."""
+        p0_class = vdemo.header.players[0][1] if vdemo.header.players else 0
+        hdr = DemoHeader(
+            magic="PXDM",
+            version=DEMO_VERSION,
+            map_num=vdemo.header.map_num,
+            skill=vdemo.header.skill + 1,  # PyHexen uses 1..5 for skill in DemoHeader
+            player_class=p0_class,
+            rng_state=(0, 0),
+            nomonsters=vdemo.header.nomonsters,
+            respawn=vdemo.header.respawn,
+            netgame=len([p for p in vdemo.header.players if p[0]]) > 1,
+            deathmatch=False,
+            num_players=max(1, len([p for p in vdemo.header.players if p[0]])),
+            iwad_checksum="",
+            final_state_hash="",
+            total_tics=len(vdemo.tics),
+        )
+        return cls(header=hdr, tics=vdemo.tics)
+
     def save_file(self, path: Path | str) -> None:
         """Save demo file to disk."""
         p = Path(path)
@@ -213,10 +399,25 @@ class Demo:
             f.write(self.save_to_bytes())
 
     @classmethod
-    def load_file(cls, path: Path | str) -> Demo:
-        """Load demo file from disk."""
-        with open(Path(path), "rb") as f:
-            return cls.load_from_bytes(f.read())
+    def load_file(cls, path: Path | str, wad: WadStack | WadFile | None = None) -> Demo:
+        """Load demo file from disk, or from a WAD lump (e.g. DEMO1..3)."""
+        p = Path(path)
+        data: bytes
+        if p.is_file():
+            with open(p, "rb") as f:
+                data = f.read()
+        elif wad is not None and str(path).upper() in wad:
+            data = wad.get_bytes(str(path).upper())
+        else:
+            raise FileNotFoundError(f"Demo file or lump not found: {path}")
+
+        if data.startswith(b"\x1f\x8b"):
+            return cls.load_from_bytes(data)
+        elif data.startswith(DEMO_MAGIC):
+            return cls.load_from_bytes(gzip.compress(data))
+        else:
+            vdemo = decode_vanilla_demo(data)
+            return cls.from_vanilla(vdemo)
 
 
 class DemoRecorder:
@@ -272,9 +473,13 @@ class DemoPlayer:
         self.current_tic: int = 0
 
     @classmethod
-    def from_file(cls, path: Path | str) -> DemoPlayer:
-        """Load demo from file and wrap in a DemoPlayer."""
-        return cls(Demo.load_file(path))
+    def from_file(
+        cls,
+        path: Path | str,
+        wad: WadStack | WadFile | None = None,
+    ) -> DemoPlayer:
+        """Load demo from file or WAD lump and wrap in a DemoPlayer."""
+        return cls(Demo.load_file(path, wad=wad))
 
     @property
     def is_finished(self) -> bool:
@@ -296,6 +501,8 @@ class DemoPlayer:
 
     def check_determinism(self, sim: GameSim) -> bool:
         """Verify that simulation state hash exactly matches the recorded demo."""
+        if not self.demo.header.final_state_hash:
+            return True
         return sim.state_hash() == self.demo.header.final_state_hash
 
 

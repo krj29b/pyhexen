@@ -103,7 +103,7 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     demo_player: DemoPlayer | None = None
     if args.playdemo or args.timedemo:
         demo_path = args.playdemo or args.timedemo
-        demo_player = DemoPlayer.from_file(demo_path)
+        demo_player = DemoPlayer.from_file(demo_path, wad=stack)
 
     # Determine map name
     map_table = load_mapinfo(stack)

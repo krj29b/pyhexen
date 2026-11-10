@@ -19,11 +19,16 @@ from pyhexen.core.fixed import FRACUNIT
 from pyhexen.core.ticcmd import AFLAG_JUMP, BT_ATTACK, BT_USE, TicCmd
 from pyhexen.sim.demo import (
     DEMO_MAGIC,
+    DEMOMARKER,
     Demo,
     DemoError,
     DemoPlayer,
     DemoRecorder,
     DemoVersionError,
+    VanillaDemo,
+    VanillaDemoHeader,
+    decode_vanilla_demo,
+    encode_vanilla_demo,
     pack_ticcmd,
     play_demo_to_completion,
     unpack_ticcmd,
@@ -217,3 +222,142 @@ def test_demo_file_version_and_corruption_error(tmp_path: Path) -> None:
 
     with pytest.raises(DemoError, match="Invalid demo magic"):
         Demo.load_file(demo_file)
+
+
+def test_vanilla_demo_decode_and_encode_roundtrip() -> None:
+    """Vanilla 1995 Hexen demo headers and ticcmd streams encode and decode losslessly."""
+    header = VanillaDemoHeader(
+        skill=2,
+        episode=1,
+        map_num=3,
+        longtics=False,
+        respawn=True,
+        nomonsters=False,
+        players=[(True, 0), (False, 1), (False, 2), (False, 0)],
+    )
+    tics: list[tuple[TicCmd, ...]] = [
+        (
+            TicCmd(
+                forwardmove=30,
+                sidemove=-20,
+                angleturn=0x2500,
+                buttons=BT_ATTACK,
+                lookfly=0,
+                arti=0,
+            ),
+        ),
+        (
+            TicCmd(
+                forwardmove=-40,
+                sidemove=15,
+                angleturn=-0x1800,
+                buttons=BT_USE,
+                lookfly=0x08,
+                arti=AFLAG_JUMP,
+            ),
+        ),
+        (
+            TicCmd(
+                forwardmove=0,
+                sidemove=0,
+                angleturn=0,
+                buttons=0,
+                lookfly=0,
+                arti=0,
+            ),
+        ),
+    ]
+
+    vdemo = VanillaDemo(header=header, tics=tics)
+    encoded = encode_vanilla_demo(vdemo)
+
+    assert encoded[-1] == DEMOMARKER
+    assert len(encoded) == 11 + (len(tics) * 6) + 1  # 11 hdr + 3*6 tics + 1 marker
+
+    decoded = decode_vanilla_demo(encoded)
+    assert decoded.header.skill == 2
+    assert decoded.header.episode == 1
+    assert decoded.header.map_num == 3
+    assert not decoded.header.longtics
+    assert decoded.header.respawn
+    assert not decoded.header.nomonsters
+    assert decoded.header.players[0] == (True, 0)
+    assert len(decoded.tics) == 3
+
+    assert decoded.tics[0][0].forwardmove == 30
+    assert decoded.tics[0][0].sidemove == -20
+    assert decoded.tics[0][0].angleturn == 0x2500
+    assert decoded.tics[0][0].buttons == BT_ATTACK
+
+    assert decoded.tics[1][0].forwardmove == -40
+    assert decoded.tics[1][0].sidemove == 15
+    assert decoded.tics[1][0].angleturn == -0x1800
+    assert decoded.tics[1][0].buttons == BT_USE
+
+
+def test_vanilla_demo_longtics_and_multiplayer() -> None:
+    """Vanilla demo supports longtics (16-bit angle resolution) and 2-player streams."""
+    header = VanillaDemoHeader(
+        skill=3,
+        episode=1,
+        map_num=12,
+        longtics=True,
+        respawn=False,
+        nomonsters=True,
+        players=[(True, 1), (True, 2), (False, 0), (False, 0)],
+    )
+    tics: list[tuple[TicCmd, ...]] = [
+        (
+            TicCmd(forwardmove=50, sidemove=0, angleturn=-15234),
+            TicCmd(forwardmove=-25, sidemove=30, angleturn=24500),
+        ),
+    ]
+
+    vdemo = VanillaDemo(header=header, tics=tics)
+    raw = encode_vanilla_demo(vdemo)
+    decoded = decode_vanilla_demo(raw)
+
+    assert decoded.header.longtics is True
+    assert decoded.header.nomonsters is True
+    assert len(decoded.tics) == 1
+    assert len(decoded.tics[0]) == 2
+    assert decoded.tics[0][0].angleturn == -15234
+    assert decoded.tics[0][1].angleturn == 24500
+
+
+def test_vanilla_demo_conversion_to_demo_and_player(tmp_path: Path) -> None:
+    """Vanilla demo converts to PyHexen Demo and loads via DemoPlayer seamlessly."""
+    header = VanillaDemoHeader(
+        skill=2,
+        episode=1,
+        map_num=3,
+        players=[(True, 0)],
+    )
+    tics = [(TicCmd(forwardmove=10),)]
+    vdemo = VanillaDemo(header=header, tics=tics)
+
+    demo = Demo.from_vanilla(vdemo)
+    assert demo.header.map_num == 3
+    assert demo.header.skill == 3  # Skill 2 (0-indexed) + 1
+    assert demo.header.player_class == 0
+    assert demo.header.total_tics == 1
+    assert demo.header.rng_state == (0, 0)
+    assert demo.header.final_state_hash == ""
+
+    # Test loading raw bytes from file
+    raw_file = tmp_path / "test.lmp"
+    raw_file.write_bytes(encode_vanilla_demo(vdemo))
+
+    player = DemoPlayer.from_file(raw_file)
+    assert player.total_tics == 1
+    assert not player.is_finished
+    cmds = player.get_next_cmds()
+    assert len(cmds) == 1
+    assert cmds[0].forwardmove == 10
+    assert player.is_finished
+
+
+def test_vanilla_demo_truncated_error() -> None:
+    """Buffer shorter than 12 bytes raises DemoError."""
+    with pytest.raises(DemoError, match="Vanilla demo data too short"):
+        decode_vanilla_demo(b"DEMOHEADER")

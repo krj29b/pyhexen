@@ -61,6 +61,16 @@ class WorldRenderer:
         self.context = context
         self.ctx: moderngl.Context = context.ctx
         self.fov_deg: float = fov_deg
+        self.authentic_lowres: bool = False
+        self.lowres_width: int = 320
+        self.lowres_height: int = 200
+        self.smooth_filter: bool = False
+        self._lowres_fbo: moderngl.Framebuffer | None = None
+        self._lowres_color_tex: moderngl.Texture | None = None
+        self._lowres_depth_rb: moderngl.Renderbuffer | None = None
+        self._upscale_prog: moderngl.Program | None = None
+        self._upscale_vao: moderngl.VertexArray | None = None
+        self._upscale_vbo: moderngl.Buffer | None = None
 
         self.wad: WadStack | WadFile | None = wad
         self.level: Level | None = None
@@ -104,6 +114,107 @@ class WorldRenderer:
             if self.tex_mgr.texture_registry is not None and len(self.tex_mgr.texture_registry) > 1:
                 return self.tex_mgr.get_wall_texture(1, translated=False)
             return self._get_fallback_texture()
+
+    def set_smooth_filter(self, enabled: bool) -> None:
+        """Toggle smooth texture filtering."""
+        self.smooth_filter = enabled
+        if self.tex_mgr is not None:
+            self.tex_mgr.set_filtering(enabled)
+
+    def _ensure_lowres_fbo(self) -> None:
+        if self._lowres_fbo is not None and self._lowres_color_tex is not None:
+            if self._lowres_color_tex.size == (self.lowres_width, self.lowres_height):
+                return
+            self._release_lowres_fbo()
+
+        self._lowres_color_tex = self.ctx.texture((self.lowres_width, self.lowres_height), 4)
+        self._lowres_color_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+        self._lowres_depth_rb = self.ctx.depth_renderbuffer((self.lowres_width, self.lowres_height))
+        self._lowres_fbo = self.ctx.framebuffer(
+            color_attachments=[self._lowres_color_tex],
+            depth_attachment=self._lowres_depth_rb,
+        )
+
+    def _release_lowres_fbo(self) -> None:
+        if self._lowres_fbo is not None:
+            self._lowres_fbo.release()
+            self._lowres_fbo = None
+        if self._lowres_color_tex is not None:
+            self._lowres_color_tex.release()
+            self._lowres_color_tex = None
+        if self._lowres_depth_rb is not None:
+            self._lowres_depth_rb.release()
+            self._lowres_depth_rb = None
+
+    def _ensure_upscale_pipeline(self) -> None:
+        if self._upscale_prog is not None:
+            return
+        vert_src = """#version 330 core
+in vec2 in_pos;
+in vec2 in_uv;
+out vec2 v_uv;
+void main() {
+    v_uv = in_uv;
+    gl_Position = vec4(in_pos, 0.0, 1.0);
+}
+"""
+        frag_src = """#version 330 core
+uniform sampler2D u_tex;
+in vec2 v_uv;
+out vec4 f_color;
+void main() {
+    f_color = texture(u_tex, v_uv);
+}
+"""
+        self._upscale_prog = self.ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
+        quad = np.array(
+            [
+                -1.0,
+                -1.0,
+                0.0,
+                0.0,
+                1.0,
+                -1.0,
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                1.0,
+                -1.0,
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                -1.0,
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+            ],
+            dtype=np.float32,
+        )
+        self._upscale_vbo = self.ctx.buffer(quad.tobytes())
+        self._upscale_vao = self.ctx.vertex_array(
+            self._upscale_prog,
+            [(self._upscale_vbo, "2f 2f", "in_pos", "in_uv")],
+        )
+
+    def _blit_lowres_to_screen(self) -> None:
+        self._ensure_upscale_pipeline()
+        assert self._upscale_prog is not None
+        assert self._upscale_vao is not None
+        assert self._lowres_color_tex is not None
+
+        self._lowres_color_tex.use(location=0)
+        self._upscale_prog["u_tex"].value = 0
+
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.ctx.disable(moderngl.CULL_FACE)
+        self._upscale_vao.render(moderngl.TRIANGLES)
+        self.ctx.enable(moderngl.DEPTH_TEST)
 
     def load_map(
         self,
@@ -283,11 +394,21 @@ class WorldRenderer:
                 self._chunk_sky_vaos.pop(sec_idx)[1].release()
 
         # 2. Clear color and depth buffers
-        self.context.clear(0.0, 0.0, 0.0, 1.0)
+        prev_viewport = self.ctx.viewport
+        if self.authentic_lowres:
+            self._ensure_lowres_fbo()
+            assert self._lowres_fbo is not None
+            self._lowres_fbo.use()
+            self._lowres_fbo.clear(0.0, 0.0, 0.0, 1.0)
+            self.ctx.viewport = (0, 0, self.lowres_width, self.lowres_height)
+            aspect = float(self.lowres_width) / float(self.lowres_height)
+        else:
+            self.context.clear(0.0, 0.0, 0.0, 1.0)
+            aspect = self.context.aspect_ratio
 
         view = camera.view_matrix(alpha)
         proj = camera.projection_matrix(
-            self.context.aspect_ratio,
+            aspect,
             fov_deg=self.fov_deg,
             alpha=alpha,
         )
@@ -420,6 +541,17 @@ class WorldRenderer:
                 gamma=gamma,
             )
 
+        # 7. Low-res mode upscale blit to main viewport
+        if self.authentic_lowres:
+            target_fbo = (
+                self.context._fbo
+                if self.context.standalone and self.context._fbo is not None
+                else self.ctx.screen
+            )
+            target_fbo.use()
+            self.ctx.viewport = prev_viewport
+            self._blit_lowres_to_screen()
+
     def render_polyobjs(
         self,
         alpha: float = 1.0,
@@ -546,6 +678,16 @@ class WorldRenderer:
             self.tex_mgr = None
         self.sky_renderer.release()
         self.world_shader.release()
+        self._release_lowres_fbo()
+        if self._upscale_vao is not None:
+            self._upscale_vao.release()
+            self._upscale_vao = None
+        if self._upscale_vbo is not None:
+            self._upscale_vbo.release()
+            self._upscale_vbo = None
+        if self._upscale_prog is not None:
+            self._upscale_prog.release()
+            self._upscale_prog = None
 
 
 def render_polyobjs(renderer_inst: WorldRenderer, *args: Any, **kwargs: Any) -> Any:

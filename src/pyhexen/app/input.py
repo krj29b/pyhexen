@@ -89,6 +89,7 @@ class InputHandler:
 
     bindings: KeyBindings = field(default_factory=KeyBindings)
     mouse_sensitivity: float = 1.0
+    invert_mouse: bool = False
     always_run: bool = False
 
     _keys_down: set[int] = field(default_factory=set)
@@ -290,7 +291,8 @@ class InputHandler:
 
         # Mouse movement
         scaled_mx = round(mdx * self.mouse_sensitivity)
-        scaled_my = round(mdy * self.mouse_sensitivity)
+        my_factor = -1.0 if self.invert_mouse else 1.0
+        scaled_my = round(mdy * self.mouse_sensitivity * my_factor)
         if strafe:
             side += scaled_mx * 2
         else:

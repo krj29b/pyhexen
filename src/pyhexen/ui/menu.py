@@ -13,12 +13,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pygame
 
-from pyhexen.app.config import Config
+from pyhexen.app.config import Config, save_config
 from pyhexen.app.input import KeyBindings
 from pyhexen.render.overlay2d import VIRTUAL_HEIGHT, Overlay2D
 from pyhexen.wad.picture import Picture, decode_picture
@@ -33,6 +34,16 @@ SELECTOR_XOFFSET: int = -28
 SELECTOR_YOFFSET: int = -1
 SLOTTEXTLEN: int = 16
 ASCII_CURSOR: str = "["
+
+COMMON_RESOLUTIONS: tuple[tuple[int, int], ...] = (
+    (640, 400),
+    (640, 480),
+    (800, 600),
+    (1024, 768),
+    (1280, 720),
+    (1280, 800),
+    (1920, 1080),
+)
 
 LEFT_DIR: int = 0
 RIGHT_DIR: int = 1
@@ -57,7 +68,8 @@ class MenuType(IntEnum):
     LOAD = 6
     SAVE = 7
     CONTROLS = 8
-    NONE = 9
+    VIDEO = 9
+    NONE = 10
 
 
 class ItemType(IntEnum):
@@ -196,11 +208,19 @@ class MenuManager:
         wad: WadStack | WadFile | None = None,
         config: Config | None = None,
         bindings: KeyBindings | None = None,
+        config_path: Path | str | None = None,
+        on_config_changed: Callable[[Config], None] | None = None,
     ) -> None:
         self.wad: WadStack | WadFile | None = wad
         self.config: Config = config if config is not None else Config()
+        self.config_path: Path | str | None = config_path
         self.bindings: KeyBindings = bindings if bindings is not None else KeyBindings()
         self._patch_cache: dict[str, Picture] = {}
+
+        # Apply saved key bindings if present in config
+        if hasattr(self.config.controls, "bindings") and self.config.controls.bindings:
+            for act_name, code in self.config.controls.bindings.items():
+                self._assign_rebound_key(act_name, code, persist=False)
 
         # Menu state
         self.active: bool = False
@@ -232,6 +252,7 @@ class MenuManager:
         self.on_end_game: Callable[[], None] | None = None
         self.on_suicide: Callable[[], None] | None = None
         self.on_sound: Callable[[str], None] | None = None
+        self.on_config_changed: Callable[[Config], None] | None = on_config_changed
 
         # Build menus
         self.menus: dict[MenuType, Menu] = self._build_menus()
@@ -336,6 +357,16 @@ class MenuManager:
                 MenuItem(ItemType.EMPTY),
                 MenuItem(ItemType.SETMENU, "MORE...", target_menu=MenuType.OPTIONS2),
                 MenuItem(ItemType.SETMENU, "CONTROLS...", target_menu=MenuType.CONTROLS),
+                MenuItem(ItemType.SETMENU, "VIDEO OPTIONS...", target_menu=MenuType.VIDEO),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "INVERT MOUSE : ",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=1,
+                    value_getter=self._get_invert_mouse,
+                    value_setter=self._set_invert_mouse,
+                ),
             ],
             prev_menu=MenuType.MAIN,
         )
@@ -375,6 +406,83 @@ class MenuManager:
                     value_getter=self._get_music_volume,
                     value_setter=self._set_music_volume,
                 ),
+                MenuItem(ItemType.EMPTY),
+                MenuItem(ItemType.SETMENU, "VIDEO OPTIONS...", target_menu=MenuType.VIDEO),
+            ],
+            prev_menu=MenuType.OPTIONS,
+        )
+
+        # Video Options Menu (x=40, y=24)
+        menus[MenuType.VIDEO] = Menu(
+            menu_type=MenuType.VIDEO,
+            x=40,
+            y=24,
+            items=[
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "RESOLUTION",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=len(COMMON_RESOLUTIONS) - 1,
+                    value_getter=self._get_resolution_idx,
+                    value_setter=self._set_resolution_idx,
+                ),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "FULLSCREEN",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=1,
+                    value_getter=self._get_fullscreen,
+                    value_setter=self._set_fullscreen,
+                ),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "FIELD OF VIEW",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=10,
+                    value_getter=self._get_fov_slider,
+                    value_setter=self._set_fov_slider,
+                ),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "LOW-RES MODE",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=1,
+                    value_getter=self._get_lowres,
+                    value_setter=self._set_lowres,
+                ),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "PIXEL ASPECT",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=1,
+                    value_getter=self._get_aspect,
+                    value_setter=self._set_aspect,
+                ),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "TRUE PITCH",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=1,
+                    value_getter=self._get_true_pitch,
+                    value_setter=self._set_true_pitch,
+                ),
+                MenuItem(
+                    ItemType.LRFUNC,
+                    "FILTERING",
+                    slider_width=0,
+                    slider_min=0,
+                    slider_max=1,
+                    value_getter=self._get_filter,
+                    value_setter=self._set_filter,
+                ),
+                MenuItem(ItemType.EMPTY),
+                MenuItem(ItemType.EFUNC, "SAVE CONFIG", option=0),
             ],
             prev_menu=MenuType.OPTIONS,
         )
@@ -467,6 +575,93 @@ class MenuManager:
 
     def _set_music_volume(self, val: int) -> None:
         self.config.audio.music_volume = max(0.0, min(1.0, val / 15.0))
+
+    def _get_invert_mouse(self) -> int:
+        return 1 if getattr(self.config.controls, "invert_mouse", False) else 0
+
+    def _set_invert_mouse(self, val: int) -> None:
+        self.config.controls.invert_mouse = bool(val)
+
+    def _get_resolution_idx(self) -> int:
+        cur = (self.config.video.width, self.config.video.height)
+        if cur in COMMON_RESOLUTIONS:
+            return COMMON_RESOLUTIONS.index(cur)
+        return min(
+            range(len(COMMON_RESOLUTIONS)),
+            key=lambda i: (
+                abs(COMMON_RESOLUTIONS[i][0] - cur[0]) + abs(COMMON_RESOLUTIONS[i][1] - cur[1])
+            ),
+        )
+
+    def _set_resolution_idx(self, val: int) -> None:
+        idx = max(0, min(len(COMMON_RESOLUTIONS) - 1, val))
+        w, h = COMMON_RESOLUTIONS[idx]
+        self.config.video.width = w
+        self.config.video.height = h
+
+    def _get_fullscreen(self) -> int:
+        return 1 if self.config.video.fullscreen else 0
+
+    def _set_fullscreen(self, val: int) -> None:
+        self.config.video.fullscreen = bool(val)
+
+    def _get_fov_slider(self) -> int:
+        fov = getattr(self.config.video, "fov", 90.0)
+        return int(round(max(0.0, min(10.0, (fov - 70.0) / 50.0 * 10.0))))
+
+    def _set_fov_slider(self, val: int) -> None:
+        clamped = max(0, min(10, val))
+        self.config.video.fov = 70.0 + (clamped / 10.0) * 50.0
+
+    def _get_lowres(self) -> int:
+        return 1 if self.config.video.authentic_lowres else 0
+
+    def _set_lowres(self, val: int) -> None:
+        self.config.video.authentic_lowres = bool(val)
+
+    def _get_aspect(self) -> int:
+        return 1 if self.config.video.authentic_aspect else 0
+
+    def _set_aspect(self, val: int) -> None:
+        self.config.video.authentic_aspect = bool(val)
+
+    def _get_true_pitch(self) -> int:
+        return 1 if self.config.video.true_pitch else 0
+
+    def _set_true_pitch(self, val: int) -> None:
+        self.config.video.true_pitch = bool(val)
+
+    def _get_filter(self) -> int:
+        return 1 if self.config.video.smooth_filter else 0
+
+    def _set_filter(self, val: int) -> None:
+        self.config.video.smooth_filter = bool(val)
+
+    def save_config_to_disk(self) -> None:
+        """Persist current configuration and key bindings to config.toml."""
+        self.config.controls.bindings = {
+            "forward": self.bindings.forward,
+            "backward": self.bindings.backward,
+            "strafe_left": self.bindings.strafe_left,
+            "strafe_right": self.bindings.strafe_right,
+            "turn_left": self.bindings.turn_left,
+            "turn_right": self.bindings.turn_right,
+            "fire": self.bindings.fire,
+            "use": self.bindings.use,
+            "jump": self.bindings.jump,
+            "speed": self.bindings.speed,
+            "use_artifact": self.bindings.use_artifact,
+            "inv_left": self.bindings.inv_left,
+            "inv_right": self.bindings.inv_right,
+        }
+        try:
+            save_config(self.config, self.config_path)
+        except Exception:
+            pass
+
+    def _notify_config_changed(self) -> None:
+        if self.on_config_changed is not None:
+            self.on_config_changed(self.config)
 
     # -------------------------------------------------------------------------
     # Navigation & State
@@ -689,8 +884,19 @@ class MenuManager:
         if item.value_getter is None or item.value_setter is None:
             return
         curr = item.value_getter()
-        new_val = max(item.slider_min, min(item.slider_max, curr + step))
+        if item.slider_max == 1 and item.slider_min == 0:
+            new_val = 1 if curr == 0 else 0
+        elif item.text == "RESOLUTION":
+            new_val = curr + step
+            if new_val < item.slider_min:
+                new_val = item.slider_max
+            elif new_val > item.slider_max:
+                new_val = item.slider_min
+        else:
+            new_val = max(item.slider_min, min(item.slider_max, curr + step))
         item.value_setter(new_val)
+        self.save_config_to_disk()
+        self._notify_config_changed()
 
     def select_current_item(self) -> None:
         """Activate the currently focused menu item."""
@@ -738,6 +944,12 @@ class MenuManager:
                 self._play_sound(SFX_CHAT)
             elif pos == 1:  # MESSAGES
                 self.messages_on = not self.messages_on
+                self._play_sound(SFX_CHAT)
+
+        elif menu_type == MenuType.VIDEO:
+            if pos == 8:  # SAVE CONFIG
+                self.save_config_to_disk()
+                self._notify_config_changed()
                 self._play_sound(SFX_CHAT)
 
         elif menu_type == MenuType.LOAD:
@@ -841,34 +1053,41 @@ class MenuManager:
         except Exception:
             return str(code)
 
-    def _assign_rebound_key(self, action_name: str, key_code: int) -> None:
+    def _assign_rebound_key(self, action_name: str, key_code: int, persist: bool = True) -> None:
         """Assign keycode to KeyBindings."""
-        if action_name == "FORWARD":
+        act = action_name.upper().replace("_", " ")
+        if act == "FORWARD":
             self.bindings.forward = key_code
-        elif action_name == "BACKWARD":
+        elif act == "BACKWARD":
             self.bindings.backward = key_code
-        elif action_name == "STRAFE LEFT":
+        elif act == "STRAFE LEFT":
             self.bindings.strafe_left = key_code
-        elif action_name == "STRAFE RIGHT":
+        elif act == "STRAFE RIGHT":
             self.bindings.strafe_right = key_code
-        elif action_name == "TURN LEFT":
+        elif act == "TURN LEFT":
             self.bindings.turn_left = key_code
-        elif action_name == "TURN RIGHT":
+        elif act == "TURN RIGHT":
             self.bindings.turn_right = key_code
-        elif action_name == "FIRE":
+        elif act == "FIRE":
             self.bindings.fire = key_code
-        elif action_name == "USE":
+        elif act == "USE":
             self.bindings.use = key_code
-        elif action_name == "JUMP":
+        elif act == "JUMP":
             self.bindings.jump = key_code
-        elif action_name == "SPEED":
+        elif act == "SPEED":
             self.bindings.speed = key_code
-        elif action_name == "USE ARTIFACT":
+        elif act in ("USE ARTIFACT",):
             self.bindings.use_artifact = key_code
-        elif action_name == "PREV ARTIFACT":
+        elif act in ("PREV ARTIFACT", "INV LEFT"):
             self.bindings.inv_left = key_code
-        elif action_name == "NEXT ARTIFACT":
+        elif act in ("NEXT ARTIFACT", "INV RIGHT"):
             self.bindings.inv_right = key_code
+
+        if persist:
+            if hasattr(self.config.controls, "bindings"):
+                self.config.controls.bindings[action_name] = key_code
+            self.save_config_to_disk()
+            self._notify_config_changed()
 
     # -------------------------------------------------------------------------
     # Mouse Navigation
@@ -991,6 +1210,8 @@ class MenuManager:
             self._draw_file_menu(overlay)
         elif menu.menu_type == MenuType.CONTROLS:
             self._draw_controls_menu(overlay)
+        elif menu.menu_type == MenuType.VIDEO:
+            self._draw_video_menu(overlay)
 
         # 4. Standard menu items
         x = menu.x
@@ -1007,7 +1228,7 @@ class MenuManager:
                 elif menu.menu_type not in (MenuType.LOAD, MenuType.SAVE):
                     overlay.draw_text_b(itm.text, x, y)
 
-            if itm.item_type == ItemType.LRFUNC:
+            if itm.item_type == ItemType.LRFUNC and itm.slider_width > 0:
                 val = itm.value_getter() if itm.value_getter is not None else 0
                 self._draw_slider(overlay, menu.x, menu.y, idx, itm.slider_width, val)
 
@@ -1053,10 +1274,46 @@ class MenuManager:
         """Draw Options Menu ON/OFF text (DrawOptionsMenu)."""
         msg_text = "ON" if self.messages_on else "OFF"
         overlay.draw_text_b(msg_text, 196, 50)
+        inv_text = "ON" if self.config.controls.invert_mouse else "OFF"
+        overlay.draw_text_b(inv_text, 196, 170)
 
     def _draw_options2_menu(self, overlay: Overlay2D) -> None:
         """Draw Options2 Menu headers."""
         pass
+
+    def _draw_video_menu(self, overlay: Overlay2D) -> None:
+        """Draw Video Menu title and option values."""
+        overlay.draw_text_b("VIDEO OPTIONS", 160, 6, center=True)
+        menu = self.current_menu
+        val_x = 200
+
+        # 0: Resolution
+        w, h = COMMON_RESOLUTIONS[self._get_resolution_idx()]
+        overlay.draw_text_b(f"{w}X{h}", val_x, menu.y)
+
+        # 1: Fullscreen
+        fs_str = "ON" if self._get_fullscreen() else "OFF"
+        overlay.draw_text_b(fs_str, val_x, menu.y + ITEM_HEIGHT)
+
+        # 2: FOV
+        fov_val = int(round(self.config.video.fov))
+        overlay.draw_text_b(str(fov_val), val_x, menu.y + 2 * ITEM_HEIGHT)
+
+        # 3: Low-res mode
+        lr_str = "ON" if self._get_lowres() else "OFF"
+        overlay.draw_text_b(lr_str, val_x, menu.y + 3 * ITEM_HEIGHT)
+
+        # 4: Pixel aspect
+        pa_str = "ON" if self._get_aspect() else "OFF"
+        overlay.draw_text_b(pa_str, val_x, menu.y + 4 * ITEM_HEIGHT)
+
+        # 5: True pitch
+        tp_str = "ON" if self._get_true_pitch() else "OFF"
+        overlay.draw_text_b(tp_str, val_x, menu.y + 5 * ITEM_HEIGHT)
+
+        # 6: Filtering
+        flt_str = "SMOOTH" if self._get_filter() else "NEAREST"
+        overlay.draw_text_b(flt_str, val_x, menu.y + 6 * ITEM_HEIGHT)
 
     def _draw_file_menu(self, overlay: Overlay2D) -> None:
         """Draw Save/Load slots with slot boxes and descriptions (DrawFileSlots)."""

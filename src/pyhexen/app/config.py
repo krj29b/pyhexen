@@ -42,6 +42,7 @@ class AudioConfig:
 class ControlsConfig:
     mouse_sensitivity: float = 1.0
     invert_mouse: bool = False
+    bindings: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

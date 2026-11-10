@@ -43,12 +43,14 @@ class RenderContext:
         *,
         title: str = "PyHexen",
         vsync: bool = True,
+        fullscreen: bool = False,
         standalone: bool = False,
     ) -> None:
         self.width = width
         self.height = height
         self.title = title
         self.vsync = vsync
+        self.fullscreen = fullscreen
         self.standalone = standalone
         self._fbo: moderngl.Framebuffer | None = None
 
@@ -69,7 +71,11 @@ class RenderContext:
                 pygame.GL_CONTEXT_PROFILE_MASK,
                 pygame.GL_CONTEXT_PROFILE_CORE,
             )
-            flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
+            flags = pygame.OPENGL | pygame.DOUBLEBUF
+            if fullscreen:
+                flags |= pygame.FULLSCREEN
+            else:
+                flags |= pygame.RESIZABLE
             pygame.display.set_mode((width, height), flags, vsync=1 if vsync else 0)
             pygame.display.set_caption(title)
             self.ctx = moderngl.create_context(require=330)
@@ -101,13 +107,50 @@ class RenderContext:
         """Toggle vertical sync on the display window."""
         self.vsync = enabled
         if not self.standalone:
-            flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
+            flags = pygame.OPENGL | pygame.DOUBLEBUF
+            if self.fullscreen:
+                flags |= pygame.FULLSCREEN
+            else:
+                flags |= pygame.RESIZABLE
             pygame.display.set_mode(
                 (self.width, self.height),
                 flags,
                 vsync=1 if enabled else 0,
             )
             self.ctx.viewport = (0, 0, self.width, self.height)
+
+    def set_fullscreen(self, enabled: bool) -> None:
+        """Toggle fullscreen mode on the display window."""
+        self.fullscreen = enabled
+        if not self.standalone:
+            flags = pygame.OPENGL | pygame.DOUBLEBUF
+            if enabled:
+                flags |= pygame.FULLSCREEN
+            else:
+                flags |= pygame.RESIZABLE
+            pygame.display.set_mode(
+                (self.width, self.height),
+                flags,
+                vsync=1 if self.vsync else 0,
+            )
+            self.ctx.viewport = (0, 0, self.width, self.height)
+
+    def set_resolution(self, width: int, height: int) -> None:
+        """Update window and viewport resolution."""
+        self.width = max(1, width)
+        self.height = max(1, height)
+        if not self.standalone:
+            flags = pygame.OPENGL | pygame.DOUBLEBUF
+            if self.fullscreen:
+                flags |= pygame.FULLSCREEN
+            else:
+                flags |= pygame.RESIZABLE
+            pygame.display.set_mode(
+                (self.width, self.height),
+                flags,
+                vsync=1 if self.vsync else 0,
+            )
+        self.resize(self.width, self.height)
 
     def set_caption(self, caption: str) -> None:
         """Update the window title bar text."""

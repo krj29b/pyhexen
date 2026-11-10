@@ -202,6 +202,17 @@ class GpuTextureManager:
         if animdefs:
             self._init_anims(animdefs)
 
+        self.smooth_filter: bool = False
+
+    def set_filtering(self, smooth: bool) -> None:
+        """Toggle linear filtering for texture mask/alpha sampling."""
+        self.smooth_filter = smooth
+        flt = (moderngl.LINEAR, moderngl.LINEAR) if smooth else (moderngl.NEAREST, moderngl.NEAREST)
+        for cache in (self._wall_cache, self._flat_cache, self._picture_cache):
+            for tex in cache.values():
+                if hasattr(tex, "mask_tex") and tex.mask_tex is not None:
+                    tex.mask_tex.filter = flt
+
     def _init_anims(self, animdefs: list[AnimDef]) -> None:
         """Port of P_InitFTAnims (p_anim.c): resolve ANIMDEFS into runtime state."""
         for anim in animdefs:

@@ -69,6 +69,7 @@ from pyhexen.sim.enemy import (
     recursive_sound,
     try_walk,
 )
+from pyhexen.sim.hub import HubManager
 from pyhexen.sim.sight import check_sight
 
 __all__ = [
@@ -83,6 +84,7 @@ __all__ = [
     "DI_SOUTHWEST",
     "DI_WEST",
     "FLOATSPEED",
+    "HubManager",
     "MAXRADIUS",
     "MELEERANGE",
     "TOPSLOPE",

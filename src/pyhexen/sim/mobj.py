@@ -229,9 +229,13 @@ class Mobj(Thinker):
         target_idx = None
         if self.target is not None and mobj_index_map is not None:
             target_idx = mobj_index_map.get(id(self.target))
+            if target_idx is None and self.target.player is not None:
+                target_idx = "PLAYER"
         tracer_idx = None
         if self.tracer is not None and mobj_index_map is not None:
             tracer_idx = mobj_index_map.get(id(self.tracer))
+            if tracer_idx is None and self.tracer.player is not None:
+                tracer_idx = "PLAYER"
 
         sp1 = self.special1
         if isinstance(sp1, (int, str, bool, float)) or sp1 is None:

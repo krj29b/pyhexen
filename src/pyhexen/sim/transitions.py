@@ -200,6 +200,8 @@ def spawn_player_at_transition(
         player.player_state = PlayerState.PST_LIVE
         mo.health = player.health
         mo.capture_prev_state()
+        if mo not in sim.thinkers:
+            sim.thinkers.add(mo)
     else:
         spawned = spawn_player(
             sim,

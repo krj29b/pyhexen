@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
 
 
-def serialize_sim(sim: GameSim) -> dict[str, Any]:
+def serialize_sim(sim: GameSim, save_players: bool = True) -> dict[str, Any]:
     """Serialize the complete simulation state into a JSON-compatible dictionary.
 
     Port of SV_SaveMap (sv_save.c:2029).
@@ -90,6 +90,8 @@ def serialize_sim(sim: GameSim) -> dict[str, Any]:
     mobj_index_map: dict[int, int] = {}
     for thinker in sim.thinkers:
         if isinstance(thinker, Mobj) and not thinker.removed:
+            if not save_players and thinker.player is not None:
+                continue
             mobj_index_map[id(thinker)] = len(mobj_list)
             mobj_list.append(thinker)
 
@@ -99,6 +101,8 @@ def serialize_sim(sim: GameSim) -> dict[str, Any]:
         if thinker.removed:
             continue
         if isinstance(thinker, Mobj):
+            if not save_players and thinker.player is not None:
+                continue
             mo_dict = thinker.to_state(mobj_index_map)
             mo_dict["_is_mobj"] = True
             mo_dict["_mobj_idx"] = mobj_index_map[id(thinker)]
@@ -119,8 +123,9 @@ def serialize_sim(sim: GameSim) -> dict[str, Any]:
 
     # 5. Players
     players_list: list[dict[str, Any]] = []
-    for player in sim.players:
-        players_list.append(player.to_state(mobj_index_map))
+    if save_players:
+        for player in sim.players:
+            players_list.append(player.to_state(mobj_index_map))
     state["players"] = players_list
 
     # 6. ACS VM & Store
@@ -192,7 +197,8 @@ def deserialize_sim(sim: GameSim, state: dict[str, Any]) -> None:
     # 5. Clear thinkers, spatial links, and player list
     sim.thinkers.clear()
     sim.tid_map.clear()
-    sim.players.clear()
+    if state.get("players"):
+        sim.players.clear()
 
     if sim.level is not None and hasattr(sim.level, "sectors"):
         for sec in sim.level.sectors:
@@ -227,10 +233,16 @@ def deserialize_sim(sim: GameSim, state: dict[str, Any]) -> None:
     # Resolve target and tracer references for mobjs
     for mo, entry in pending_mobj_links:
         target_id = entry.get("target_id")
-        if target_id is not None and target_id in restored_mobjs:
+        if target_id == "PLAYER":
+            if sim.players and sim.players[0].mo is not None:
+                mo.target = sim.players[0].mo
+        elif target_id is not None and target_id in restored_mobjs:
             mo.target = restored_mobjs[target_id]
         tracer_id = entry.get("tracer_id")
-        if tracer_id is not None and tracer_id in restored_mobjs:
+        if tracer_id == "PLAYER":
+            if sim.players and sim.players[0].mo is not None:
+                mo.tracer = sim.players[0].mo
+        elif tracer_id is not None and tracer_id in restored_mobjs:
             mo.tracer = restored_mobjs[tracer_id]
 
     # 7. Players
@@ -477,9 +489,9 @@ def _restore_special_thinker(
     return None
 
 
-def save_sim_to_bytes(sim: GameSim) -> bytes:
+def save_sim_to_bytes(sim: GameSim, save_players: bool = True) -> bytes:
     """Serialize simulation state to compressed gzip JSON bytes."""
-    state_dict = serialize_sim(sim)
+    state_dict = serialize_sim(sim, save_players=save_players)
     data = json.dumps(state_dict, separators=(",", ":")).encode("utf-8")
     return gzip.compress(data)
 

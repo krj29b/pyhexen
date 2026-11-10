@@ -66,6 +66,30 @@ class CeilingMove(Thinker):
             if self.repeat:
                 self.direction = 1  # Reverse on crush
 
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "CeilingMove",
+            self.sector.index if self.sector is not None else -1,
+            self.speed,
+            self.topheight,
+            self.bottomheight,
+            self.direction,
+            self.crush,
+            self.repeat,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "CeilingMove",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "speed": self.speed,
+            "topheight": self.topheight,
+            "bottomheight": self.bottomheight,
+            "direction": self.direction,
+            "crush": self.crush,
+            "repeat": self.repeat,
+        }
+
 
 def special_ceiling_lower_by_value(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any

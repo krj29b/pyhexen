@@ -119,6 +119,30 @@ class VerticalDoor(Thinker):
             if self.topcountdown <= 0:
                 self.direction = -1
 
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "VerticalDoor",
+            self.sector.index if self.sector is not None else -1,
+            int(self.type),
+            self.topheight,
+            self.speed,
+            self.topwait,
+            self.topcountdown,
+            self.direction,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "VerticalDoor",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "door_type": int(self.type),
+            "speed": self.speed,
+            "topheight": self.topheight,
+            "topwait": self.topwait,
+            "topcountdown": self.topcountdown,
+            "direction": self.direction,
+        }
+
 
 def ev_do_door(
     sim: GameSim,

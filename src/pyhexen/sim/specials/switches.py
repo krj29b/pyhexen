@@ -122,6 +122,16 @@ class ButtonThinker(Thinker):
     def state_tuple(self) -> tuple[Any, ...]:
         return ("ButtonThinker", self.line.index, int(self.where), self.btexture, self.btimer)
 
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "ButtonThinker",
+            "line_index": self.line.index,
+            "where": int(self.where),
+            "btexture": self.btexture,
+            "btimer": self.btimer,
+            "sound_id": self.sound_id,
+        }
+
 
 def p_change_switch_texture(sim: GameSim, line: Line, repeat: bool) -> bool:
     """Toggle the switch texture on `line`'s front side and start a `ButtonThinker` if `repeat`.

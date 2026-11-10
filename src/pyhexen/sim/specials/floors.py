@@ -140,6 +140,26 @@ class FloorMove(Thinker):
                 self.sector.special_data = None
                 sim.tag_finished(self.sector.tag)
 
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "FloorMove",
+            self.sector.index if self.sector is not None else -1,
+            self.speed,
+            self.floordestheight,
+            self.direction,
+            self.crush,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "FloorMove",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "speed": self.speed,
+            "dest": self.floordestheight,
+            "direction": self.direction,
+            "crush": self.crush,
+        }
+
 
 class FloorWaggle(Thinker):
     """Port of T_FloorWaggle (p_floor.c)."""
@@ -163,6 +183,26 @@ class FloorWaggle(Thinker):
         offset = (FLOAT_BOB_OFFSETS[self.accumulator] * self.amplitude) >> 6
         self.sector.floor_height = self.original_height + offset
         notify_sector_changed(sim, self.sector)
+
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "FloorWaggle",
+            self.sector.index if self.sector is not None else -1,
+            self.original_height,
+            self.amplitude,
+            self.frequency,
+            self.accumulator,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "FloorWaggle",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "original_height": self.original_height,
+            "amplitude": self.amplitude,
+            "frequency": self.frequency,
+            "accumulator": self.accumulator,
+        }
 
 
 def ev_do_floor(

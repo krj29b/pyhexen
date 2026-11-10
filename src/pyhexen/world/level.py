@@ -97,6 +97,36 @@ class Sector:
     sound_target: Any = None
     sound_traversed: int = 0
 
+    def to_state(self) -> dict[str, Any]:
+        """Port of ArchiveWorld sector portion (sv_save.c:2511-2521)."""
+        return {
+            "index": self.index,
+            "floor_height": self.floor_height,
+            "ceiling_height": self.ceiling_height,
+            "floor_pic": self.floor_pic,
+            "ceiling_pic": self.ceiling_pic,
+            "light_level": self.light_level,
+            "special": self.special,
+            "tag": self.tag,
+            "seq_type": self.seq_type,
+            "prev_floor_height": self.prev_floor_height,
+            "prev_ceiling_height": self.prev_ceiling_height,
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Port of UnarchiveWorld sector portion (sv_save.c:2562-2574)."""
+        self.floor_height = state["floor_height"]
+        self.ceiling_height = state["ceiling_height"]
+        self.floor_pic = state["floor_pic"]
+        self.ceiling_pic = state["ceiling_pic"]
+        self.light_level = state["light_level"]
+        self.special = state["special"]
+        self.tag = state["tag"]
+        self.seq_type = state.get("seq_type", 0)
+        self.prev_floor_height = state.get("prev_floor_height", self.floor_height)
+        self.prev_ceiling_height = state.get("prev_ceiling_height", self.ceiling_height)
+        self.special_data = None
+
 
 @dataclass(slots=True)
 class Side:
@@ -109,6 +139,25 @@ class Side:
     bottom_texture: str
     mid_texture: str
     sector: Sector
+
+    def to_state(self) -> dict[str, Any]:
+        """Port of ArchiveWorld side portion (sv_save.c:2537-2543)."""
+        return {
+            "index": self.index,
+            "texture_offset": self.texture_offset,
+            "row_offset": self.row_offset,
+            "top_texture": self.top_texture,
+            "bottom_texture": self.bottom_texture,
+            "mid_texture": self.mid_texture,
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Port of UnarchiveWorld side portion (sv_save.c:2590-2596)."""
+        self.texture_offset = state["texture_offset"]
+        self.row_offset = state["row_offset"]
+        self.top_texture = state["top_texture"]
+        self.bottom_texture = state["bottom_texture"]
+        self.mid_texture = state["mid_texture"]
 
 
 @dataclass(slots=True)
@@ -133,6 +182,22 @@ class Line:
     valid_count: int = 0
     special_data: Any = None
     is_polyobj: bool = False
+
+    def to_state(self) -> dict[str, Any]:
+        """Port of ArchiveWorld line portion (sv_save.c:2522-2530)."""
+        return {
+            "index": self.index,
+            "flags": self.flags,
+            "special": self.special,
+            "args": list(self.args),
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Port of UnarchiveWorld line portion (sv_save.c:2575-2583)."""
+        self.flags = state["flags"]
+        self.special = state["special"]
+        self.args = tuple(state["args"])  # type: ignore[assignment]
+        self.special_data = None
 
 
 @dataclass(slots=True)

@@ -52,6 +52,16 @@ class ScrollThinker(Thinker):
             self.side.row_offset,
         )
 
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "ScrollThinker",
+            "line_index": self.line.index,
+            "dx": self.dx,
+            "dy": self.dy,
+            "texture_offset": self.side.texture_offset,
+            "row_offset": self.side.row_offset,
+        }
+
 
 def spawn_line_scroller(sim: GameSim, line: Line) -> ScrollThinker | None:
     """Create and register a `ScrollThinker` if `line.special` is 100..103."""

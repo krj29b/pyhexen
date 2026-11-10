@@ -178,3 +178,27 @@ class GameSim:
             state_items.append(("sectors", sector_tuples))
         hasher.update(repr(tuple(state_items)).encode("utf-8"))
         return hasher.hexdigest()
+
+    def to_state(self) -> dict[str, Any]:
+        """Serialize simulation state to a dict (T13.2)."""
+        from pyhexen.sim.serialization import serialize_sim
+
+        return serialize_sim(self)
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Restore simulation state from a dict (T13.2)."""
+        from pyhexen.sim.serialization import deserialize_sim
+
+        deserialize_sim(self, state)
+
+    def save_to_bytes(self) -> bytes:
+        """Serialize simulation state to compressed bytes (T13.2)."""
+        from pyhexen.sim.serialization import save_sim_to_bytes
+
+        return save_sim_to_bytes(self)
+
+    def load_from_bytes(self, data: bytes) -> None:
+        """Restore simulation state from compressed bytes (T13.2)."""
+        from pyhexen.sim.serialization import load_sim_from_bytes
+
+        load_sim_from_bytes(self, data)

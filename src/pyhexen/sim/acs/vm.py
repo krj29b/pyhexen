@@ -223,6 +223,26 @@ class RunningScript(Thinker):
             self.wait_value,
         )
 
+    def to_state(self, mobj_index_map: dict[int, int] | None = None) -> dict[str, Any]:
+        """Port of StreamOut_acs_t (sv_save.c:2812)."""
+        act_id = None
+        if self.activator is not None and mobj_index_map is not None:
+            act_id = mobj_index_map.get(id(self.activator))
+        return {
+            "type": "RunningScript",
+            "number": self.number,
+            "ip": self.ip,
+            "state": int(self.state),
+            "vars": list(self.vars),
+            "stack": list(self.stack),
+            "delay_count": self.delay_count,
+            "wait_value": self.wait_value,
+            "line_index": self.line.index if self.line is not None else None,
+            "side": self.side,
+            "print_buffer": list(self.print_buffer),
+            "activator_id": act_id,
+        }
+
 
 class ACSVM:
     """Port of ACS engine in p_acs.c."""
@@ -232,6 +252,20 @@ class ACSVM:
         self.map_vars: list[int] = [0] * MAX_ACS_MAP_VARS
         self.world_vars: list[int] = [0] * MAX_ACS_WORLD_VARS
         self.scripts: dict[int, RunningScript] = {}
+
+    def to_state(self) -> dict[str, Any]:
+        """Port of ArchiveScripts (sv_save.c:2971-2986)."""
+        return {
+            "map_vars": list(self.map_vars),
+            "world_vars": list(self.world_vars),
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Port of UnarchiveScripts (sv_save.c:2994-3009)."""
+        if "map_vars" in state:
+            self.map_vars = list(state["map_vars"])
+        if "world_vars" in state:
+            self.world_vars = list(state["world_vars"])
 
     def set_behavior(self, behavior: BehaviorData) -> None:
         self.behavior = behavior

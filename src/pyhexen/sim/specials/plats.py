@@ -73,6 +73,30 @@ class Plat(Thinker):
             if self.count <= 0:
                 self.direction = 1
 
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "Plat",
+            self.sector.index if self.sector is not None else -1,
+            self.speed,
+            self.low,
+            self.high,
+            self.direction,
+            self.wait,
+            self.count,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "Plat",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "speed": self.speed,
+            "low": self.low,
+            "high": self.high,
+            "direction": self.direction,
+            "wait": self.wait,
+            "count": self.count,
+        }
+
 
 def special_plat_down_wait_up_stay(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any

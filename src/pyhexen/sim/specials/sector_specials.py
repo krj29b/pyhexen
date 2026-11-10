@@ -122,6 +122,14 @@ class PhasedLightThinker(Thinker):
     def state_tuple(self) -> tuple[Any, ...]:
         return ("PhasedLightThinker", self.sector.index, self.base, self.index)
 
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "PhasedLightThinker",
+            "sector_index": self.sector.index,
+            "base": self.base,
+            "index": self.index,
+        }
+
 
 def p_spawn_phased_light(
     sim: GameSim,

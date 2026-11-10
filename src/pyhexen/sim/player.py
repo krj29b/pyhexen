@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.angles import (
     ANG1,
@@ -197,6 +197,98 @@ class Player:
     world_timer: int = 0
     cheats: int = 0
     quake_intensity: int = 0
+
+    def to_state(self, mobj_index_map: dict[int, int] | None = None) -> dict[str, Any]:
+        """Port of StreamOut_player_t (sv_save.c:1350-1450)."""
+        mo_idx = None
+        if self.mo is not None and mobj_index_map is not None:
+            mo_idx = mobj_index_map.get(id(self.mo))
+
+        return {
+            "player_class": self.player_class,
+            "original_class": self.original_class,
+            "player_state": int(self.player_state),
+            "viewz": self.viewz,
+            "prev_viewz": self.prev_viewz,
+            "viewheight": self.viewheight,
+            "deltaviewheight": self.deltaviewheight,
+            "bob": self.bob,
+            "health": self.health,
+            "armor_points": list(self.armor_points),
+            "keys": self.keys,
+            "mana": list(self.mana),
+            "readyweapon": self.readyweapon,
+            "pendingweapon": self.pendingweapon,
+            "weaponowned": list(self.weaponowned),
+            "pieces": self.pieces,
+            "lookdir": self.lookdir,
+            "centering": self.centering,
+            "flyheight": self.flyheight,
+            "powers": list(self.powers),
+            "inventory": [{"type": slot.type, "count": slot.count} for slot in self.inventory],
+            "ready_artifact": self.ready_artifact,
+            "artifact_count": self.artifact_count,
+            "inv_ptr": self.inv_ptr,
+            "message": self.message,
+            "message_tics": self.message_tics,
+            "yellow_message": self.yellow_message,
+            "damagecount": self.damagecount,
+            "bonuscount": self.bonuscount,
+            "poisoncount": self.poisoncount,
+            "extralight": self.extralight,
+            "fixedcolormap": self.fixedcolormap,
+            "palette": self.palette,
+            "morph_tics": self.morph_tics,
+            "secret_count": self.secret_count,
+            "world_timer": self.world_timer,
+            "cheats": self.cheats,
+            "quake_intensity": self.quake_intensity,
+            "mo_id": mo_idx,
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Port of StreamIn_player_t (sv_save.c:1455-1550)."""
+        self.player_class = state["player_class"]
+        self.original_class = state.get("original_class", self.player_class)
+        self.player_state = PlayerState(state.get("player_state", 0))
+        self.viewz = state.get("viewz", 0)
+        self.prev_viewz = state.get("prev_viewz", self.viewz)
+        self.viewheight = state.get("viewheight", VIEWHEIGHT)
+        self.deltaviewheight = state.get("deltaviewheight", 0)
+        self.bob = state.get("bob", 0)
+        self.health = state["health"]
+        self.armor_points = list(state.get("armor_points", [0, 0, 0, 0]))
+        self.keys = state.get("keys", 0)
+        self.mana = list(state.get("mana", [0, 0]))
+        self.readyweapon = state.get("readyweapon", WP_FIRST)
+        self.pendingweapon = state.get("pendingweapon", WP_NOCHANGE)
+        self.weaponowned = list(state.get("weaponowned", [True, False, False, False]))
+        self.pieces = state.get("pieces", 0)
+        self.lookdir = state.get("lookdir", 0)
+        self.centering = state.get("centering", False)
+        self.flyheight = state.get("flyheight", 0)
+        self.powers = list(state.get("powers", [0] * NUMPOWERS))
+        inv_data = state.get("inventory", [])
+        self.inventory = [
+            InventorySlot(type=item["type"], count=item["count"]) for item in inv_data
+        ]
+        self.ready_artifact = state.get("ready_artifact", 0)
+        self.artifact_count = state.get("artifact_count", len(self.inventory))
+        self.inv_ptr = state.get("inv_ptr", 0)
+        self.message = state.get("message", "")
+        self.message_tics = state.get("message_tics", 0)
+        self.yellow_message = state.get("yellow_message", False)
+        self.damagecount = state.get("damagecount", 0)
+        self.bonuscount = state.get("bonuscount", 0)
+        self.poisoncount = state.get("poisoncount", 0)
+        self.extralight = state.get("extralight", 0)
+        self.fixedcolormap = state.get("fixedcolormap", 0)
+        self.palette = state.get("palette", 0)
+        self.morph_tics = state.get("morph_tics", 0)
+        self.secret_count = state.get("secret_count", 0)
+        self.world_timer = state.get("world_timer", 0)
+        self.cheats = state.get("cheats", 0)
+        self.quake_intensity = state.get("quake_intensity", 0)
 
 
 def p_thrust(player: Player, angle: int, move: int) -> None:

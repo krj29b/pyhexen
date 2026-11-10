@@ -122,6 +122,30 @@ class Polyobj:
         self.prev_y = self.start_spot.y
         self.prev_angle = self.angle
 
+    def to_state(self) -> dict[str, Any]:
+        """Port of ArchivePolyobjs (sv_save.c:3175-3188)."""
+        return {
+            "tag": self.tag,
+            "angle": self.angle,
+            "start_spot_x": self.start_spot.x,
+            "start_spot_y": self.start_spot.y,
+        }
+
+    def from_state(self, state: dict[str, Any], sim: GameSim | None = None) -> None:
+        """Port of UnarchivePolyobjs (sv_save.c:3196-3218)."""
+        target_angle = state["angle"]
+        target_x = state["start_spot_x"]
+        target_y = state["start_spot_y"]
+        if sim is not None:
+            po_rotate_polyobj(sim, self, target_angle)
+            delta_x = target_x - self.start_spot.x
+            delta_y = target_y - self.start_spot.y
+            po_move_polyobj(sim, self, delta_x, delta_y)
+        else:
+            self.angle = target_angle
+            self.start_spot.x = target_x
+            self.start_spot.y = target_y
+
     @property
     def busy(self) -> bool:
         """Port of PO_Busy (po_man.c:1491-1504)."""
@@ -962,6 +986,14 @@ class RotatePolyThinker(Thinker):
     def state_tuple(self) -> tuple[Any, ...]:
         return ("RotatePolyThinker", self.polyobj, self.speed, self.dist)
 
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "RotatePolyThinker",
+            "polyobj": self.polyobj,
+            "speed": self.speed,
+            "dist": self.dist,
+        }
+
 
 def _cardinal_cos_sin(fine_an: int) -> tuple[int, int]:
     """Return exact (cos, sin) in 16.16 fixed point, using exact 1.0 for cardinal angles."""
@@ -1046,6 +1078,17 @@ class MovePolyThinker(Thinker):
             self.x_speed,
             self.y_speed,
         )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "MovePolyThinker",
+            "polyobj": self.polyobj,
+            "speed": self.speed,
+            "dist": self.dist,
+            "angle": self.angle,
+            "x_speed": self.x_speed,
+            "y_speed": self.y_speed,
+        }
 
 
 class PolyDoorType(IntEnum):
@@ -1195,6 +1238,22 @@ class PolyDoorThinker(Thinker):
             self.wait_tics,
             self.close,
         )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "PolyDoorThinker",
+            "polyobj": self.polyobj,
+            "door_type": int(self.door_type),
+            "speed": self.speed,
+            "dist": self.dist,
+            "total_dist": self.total_dist,
+            "direction": self.direction,
+            "x_speed": self.x_speed,
+            "y_speed": self.y_speed,
+            "tics": self.tics,
+            "wait_tics": self.wait_tics,
+            "close": self.close,
+        }
 
 
 def ev_rotate_poly(

@@ -76,6 +76,30 @@ class Pillar(Thinker):
                 self.sector.special_data = None
                 sim.tag_finished(self.sector.tag)
 
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "Pillar",
+            self.sector.index if self.sector is not None else -1,
+            self.speed,
+            self.floordest,
+            self.ceilingdest,
+            self.crush,
+            self.floor_done,
+            self.ceiling_done,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "Pillar",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "speed": self.speed,
+            "floordest": self.floordest,
+            "ceilingdest": self.ceilingdest,
+            "crush": self.crush,
+            "floor_done": self.floor_done,
+            "ceiling_done": self.ceiling_done,
+        }
+
 
 def special_pillar_build(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any

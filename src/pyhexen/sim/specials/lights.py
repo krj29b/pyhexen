@@ -43,6 +43,26 @@ class LightFade(Thinker):
             self.sector.light_level = int(self.current)
         notify_sector_changed(sim, self.sector)
 
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "LightFade",
+            self.sector.index if self.sector is not None else -1,
+            self.target,
+            self.tics,
+            self.step,
+            self.current,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "LightFade",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "target": self.target,
+            "tics": self.tics,
+            "step": self.step,
+            "current": self.current,
+        }
+
 
 class LightGlow(Thinker):
     """Port of glow_t and T_Glow (p_lights.c)."""
@@ -65,6 +85,26 @@ class LightGlow(Thinker):
             self.direction = 1
         self.sector.light_level = new_light
         notify_sector_changed(sim, self.sector)
+
+    def state_tuple(self) -> tuple[Any, ...]:
+        return (
+            "LightGlow",
+            self.sector.index if self.sector is not None else -1,
+            self.min_light,
+            self.max_light,
+            self.speed,
+            self.direction,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "type": "LightGlow",
+            "sector_index": self.sector.index if self.sector is not None else -1,
+            "min_light": self.min_light,
+            "max_light": self.max_light,
+            "speed": self.speed,
+            "direction": self.direction,
+        }
 
 
 def special_light_change_to_value(

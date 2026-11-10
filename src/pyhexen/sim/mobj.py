@@ -224,6 +224,113 @@ class Mobj(Thinker):
             int(self.state_num),
         )
 
+    def to_state(self, mobj_index_map: dict[int, int] | None = None) -> dict[str, Any]:
+        """Port of StreamOut_mobj_t (sv_save.c:971-1100)."""
+        target_idx = None
+        if self.target is not None and mobj_index_map is not None:
+            target_idx = mobj_index_map.get(id(self.target))
+        tracer_idx = None
+        if self.tracer is not None and mobj_index_map is not None:
+            tracer_idx = mobj_index_map.get(id(self.tracer))
+
+        sp1 = self.special1
+        if isinstance(sp1, (int, str, bool, float)) or sp1 is None:
+            pass
+        elif mobj_index_map is not None and id(sp1) in mobj_index_map:
+            sp1 = mobj_index_map[id(sp1)]
+        else:
+            sp1 = 0
+
+        sp2 = self.special2
+        if isinstance(sp2, (int, str, bool, float)) or sp2 is None:
+            pass
+        elif mobj_index_map is not None and id(sp2) in mobj_index_map:
+            sp2 = mobj_index_map[id(sp2)]
+        else:
+            sp2 = 0
+
+        return {
+            "type": int(self.type),
+            "x": self.x,
+            "y": self.y,
+            "z": self.z,
+            "prev_x": self.prev_x,
+            "prev_y": self.prev_y,
+            "prev_z": self.prev_z,
+            "angle": self.angle,
+            "prev_angle": self.prev_angle,
+            "sprite": self.sprite,
+            "frame": self.frame,
+            "floorpic": self.floorpic,
+            "radius": self.radius,
+            "height": self.height,
+            "momx": self.momx,
+            "momy": self.momy,
+            "momz": self.momz,
+            "tics": self.tics,
+            "state_num": self.state_num,
+            "damage": self.damage,
+            "flags": self.flags,
+            "flags2": self.flags2,
+            "special1": sp1,
+            "special2": sp2,
+            "health": self.health,
+            "movedir": self.movedir,
+            "movecount": self.movecount,
+            "reactiontime": self.reactiontime,
+            "threshold": self.threshold,
+            "lastlook": self.lastlook,
+            "floorclip": self.floorclip,
+            "tid": self.tid,
+            "special": self.special,
+            "args": list(self.args),
+            "floorz": self.floorz,
+            "ceilingz": self.ceilingz,
+            "target_id": target_idx,
+            "tracer_id": tracer_idx,
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        """Port of StreamIn_mobj_t (sv_save.c:1105-1200)."""
+        self.type = state["type"]
+        self.info = MOBJINFO[self.type] if 0 <= self.type < len(MOBJINFO) else MOBJINFO[0]
+        self.x = state["x"]
+        self.y = state["y"]
+        self.z = state["z"]
+        self.prev_x = state.get("prev_x", self.x)
+        self.prev_y = state.get("prev_y", self.y)
+        self.prev_z = state.get("prev_z", self.z)
+        self.angle = state["angle"]
+        self.prev_angle = state.get("prev_angle", self.angle)
+        self.sprite = state.get("sprite", 0)
+        self.frame = state.get("frame", 0)
+        self.floorpic = state.get("floorpic", 0)
+        self.radius = state.get("radius", self.info.radius)
+        self.height = state.get("height", self.info.height)
+        self.momx = state.get("momx", 0)
+        self.momy = state.get("momy", 0)
+        self.momz = state.get("momz", 0)
+        self.tics = state.get("tics", 0)
+        self.state_num = state["state_num"]
+        self.state = STATES[self.state_num] if 0 <= self.state_num < len(STATES) else STATES[0]
+        self.damage = state.get("damage", 0)
+        self.flags = state.get("flags", self.info.flags)
+        self.flags2 = state.get("flags2", self.info.flags2)
+        self.special1 = state.get("special1", 0)
+        self.special2 = state.get("special2", 0)
+        self.health = state.get("health", 0)
+        self.movedir = state.get("movedir", 0)
+        self.movecount = state.get("movecount", 0)
+        self.reactiontime = state.get("reactiontime", 0)
+        self.threshold = state.get("threshold", 0)
+        self.lastlook = state.get("lastlook", 0)
+        self.floorclip = state.get("floorclip", 0)
+        self.tid = state.get("tid", 0)
+        self.special = state.get("special", 0)
+        self.args = tuple(state.get("args", (0, 0, 0, 0, 0)))  # type: ignore[assignment]
+        self.floorz = state.get("floorz", 0)
+        self.ceilingz = state.get("ceilingz", 0)
+
 
 def set_thing_position(level: Level, mobj: Mobj) -> None:
     """Link `mobj` into its subsector/sector thing list and blockmap cell.

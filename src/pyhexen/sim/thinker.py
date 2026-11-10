@@ -55,6 +55,10 @@ class ThinkerList:
         self._cap._prev = self._cap
         self._cap._next = self._cap
 
+    def clear(self) -> None:
+        """Reset the thinker list to empty."""
+        self.init_thinkers()
+
     def add(self, thinker: Thinker) -> None:
         """Port of P_AddThinker (p_tick.c). Appends `thinker` at the end of the list."""
         thinker.removed = False

@@ -10,7 +10,7 @@ Port of ACSStore and P_CheckACSStore (p_acs.c).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -54,3 +54,25 @@ class ACSStore:
     def clear(self) -> None:
         """Clear store when switching clusters."""
         self.entries.clear()
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "entries": [
+                {
+                    "map_num": e.map_num,
+                    "script_num": e.script_num,
+                    "args": list(e.args),
+                }
+                for e in self.entries
+            ]
+        }
+
+    def from_state(self, state: dict[str, Any]) -> None:
+        self.entries = [
+            QueuedScript(
+                map_num=item["map_num"],
+                script_num=item["script_num"],
+                args=tuple(item["args"]),  # type: ignore[assignment]
+            )
+            for item in state.get("entries", [])
+        ]

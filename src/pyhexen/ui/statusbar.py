@@ -145,6 +145,30 @@ def get_sb_palette(player: Player) -> int:
     return 0
 
 
+LUMP_ALIASES: dict[str, str] = {
+    "MANAVL1": "MANAVL1",
+    "MANAVIAL1": "MANAVL1",
+    "MANAVL2": "MANAVL2",
+    "MANAVIAL2": "MANAVL2",
+    "MANAVL1D": "MANAVL1D",
+    "MANAVIALDIM1": "MANAVL1D",
+    "MANAVL2D": "MANAVL2D",
+    "MANAVIALDIM2": "MANAVL2D",
+    "MANABRT1": "MANABRT1",
+    "MANABRIGHT1": "MANABRT1",
+    "MANABRT2": "MANABRT2",
+    "MANABRIGHT2": "MANABRT2",
+    "ARTICLS": "ARTICLS",
+    "ARTICLEAR": "ARTICLS",
+    "ARMCLS": "ARMCLS",
+    "ARMCLEAR": "ARMCLS",
+    "MANACLS": "MANACLS",
+    "MANACLEAR": "MANACLS",
+    "NEGNUM": "NEGNUM",
+    "NEGATIVE": "NEGNUM",
+}
+
+
 class StatusBar:
     """Hexen status bar, inventory bar, and HUD overlay manager.
 
@@ -179,13 +203,22 @@ class StatusBar:
         if key in self._patch_cache:
             return self._patch_cache[key]
 
+        target_lump = LUMP_ALIASES.get(key, key)
         pic: Picture | None = None
         if self.wad is not None:
-            try:
-                data = self.wad.read_lump(key)
-                pic = decode_picture(data)
-            except Exception:
-                pic = None
+            for candidate in (target_lump, key):
+                try:
+                    if hasattr(self.wad, "get_bytes"):
+                        data = self.wad.get_bytes(candidate)
+                    elif hasattr(self.wad, "read_lump"):
+                        data = self.wad.read_lump(candidate)
+                    else:
+                        data = None
+                    if data is not None:
+                        pic = decode_picture(data)
+                        break
+                except Exception:
+                    continue
 
         if pic is None:
             pic = self._make_fallback_patch(key)
@@ -218,9 +251,13 @@ class StatusBar:
             return _make_synthetic_picture(8, 16, 220)
         if n.startswith("SMALLIN"):
             return _make_synthetic_picture(4, 7, 210)
-        if n in ("SELECTBOX", "WEAPONSLOT", "WEAPONFULL"):
+        if (
+            n in ("SELECTBOX", "WEAPONSLOT", "WEAPONFULL")
+            or n.startswith("WPSLOT")
+            or n.startswith("WPFULL")
+        ):
             return _make_synthetic_picture(32, 32, 230)
-        if n.startswith("PIECE"):
+        if n.startswith("PIECE") or n.startswith("WPIECE"):
             return _make_synthetic_picture(15, 30, 200)
         if n.startswith("KEYSLOT") or n.startswith("ARMSLOT"):
             return _make_synthetic_picture(16, 16, 205)
@@ -498,21 +535,27 @@ class StatusBar:
 
     def draw_weapon_pieces(self, overlay: Overlay2D, player: Player) -> None:
         """Draw fourth weapon assembly progress (port of DrawWeaponPieces)."""
+        pclass = min(2, max(0, player.player_class))
+        cls_char = ("F", "C", "M")[pclass]
         pieces = player.pieces
         if pieces == 7:
-            overlay.draw_picture(self.get_patch("WEAPONFULL"), 190, 162)
+            full_patch = self.get_patch(f"WPFULL{pclass}") or self.get_patch("WEAPONFULL")
+            overlay.draw_picture(full_patch, 190, 162)
             return
 
-        overlay.draw_picture(self.get_patch("WEAPONSLOT"), 190, 162)
-        pclass = min(2, max(0, player.player_class))
+        slot_patch = self.get_patch(f"WPSLOT{pclass}") or self.get_patch("WEAPONSLOT")
+        overlay.draw_picture(slot_patch, 190, 162)
         coords = PIECE_X[pclass]
 
         if pieces & WPIECE1:
-            overlay.draw_picture(self.get_patch("PIECE1"), coords[0], 162)
+            p1 = self.get_patch(f"WPIECE{cls_char}1") or self.get_patch("PIECE1")
+            overlay.draw_picture(p1, coords[0], 162)
         if pieces & WPIECE2:
-            overlay.draw_picture(self.get_patch("PIECE2"), coords[1], 162)
+            p2 = self.get_patch(f"WPIECE{cls_char}2") or self.get_patch("PIECE2")
+            overlay.draw_picture(p2, coords[1], 162)
         if pieces & WPIECE3:
-            overlay.draw_picture(self.get_patch("PIECE3"), coords[2], 162)
+            p3 = self.get_patch(f"WPIECE{cls_char}3") or self.get_patch("PIECE3")
+            overlay.draw_picture(p3, coords[2], 162)
 
     def draw_inventory_bar(
         self,

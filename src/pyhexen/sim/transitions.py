@@ -240,7 +240,9 @@ def execute_map_transition(
             victory=True,
         )
 
-    real_target_map = resolve_target_map(target_map, mapinfo_table)
+    # `target_map` is a real map number: G_Completed and SV_MapTeleport never
+    # translate it. Only the next-map exit path translates warp numbers (exit_normal).
+    real_target_map = target_map
 
     old_cluster = 1
     new_cluster = 1
@@ -294,7 +296,9 @@ def teleport_end_game(sim: GameSim) -> bool:
 def exit_normal(sim: GameSim, position: int = 0) -> bool:
     """Exit to the next level in sequence (special 243 / TimerGame expiry).
 
-    Port of p_tick.c:72.
+    Port of p_tick.c:72, `G_Completed(P_TranslateMap(P_GetMapNextMap(gamemap)), 0)`.
+    The sim has no MAPINFO, so the game-flow controller stores the already
+    translated next map in `sim.next_map` when it loads a level.
     """
     next_map = getattr(sim, "next_map", 0) or (sim.map_num + 1)
     sim.events.emit(MapExit(next_map=next_map, position=position, secret=False))

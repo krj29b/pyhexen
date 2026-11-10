@@ -45,3 +45,9 @@ Add new ADRs at the bottom. Never delete one; supersede it instead.
 **Status:** ACCEPTED
 **Context:** We want the authentic look, palette flashes and fog maps.
 **Decision:** Upload textures as 8-bit indices; the shader applies the COLORMAP/FOGMAP row, then PLAYPAL. An optional RGBA "smooth" mode can come later.
+
+## ADR-008 — Game flow lives in `app/GameFlow`, mirroring G_Ticker game actions
+**Status:** ACCEPTED
+**Context:** Map exits, intermissions, the finale, new games and reborn must switch the current `GameSim` between tics. The sim must not import `ui`, and nothing may swap the sim in the middle of a tic.
+**Decision:** `app/game_flow.py` owns the current `GameSim` and `HubManager`. It drains the sim's event bus after every tic and turns `MapExit` into a deferred action that runs at the start of the next tic, as vanilla `gameaction` does (`ga_completed` → intermission → `ga_leavemap` → `SV_MapTeleport`). Reborn uses an in-memory copy of the vanilla reborn slot, written after every map change. Every map entry (new map, revisit, reborn) runs a full `GameSim.setup_level()` first, as vanilla `G_InitNew` does, and a revisit or reborn then unarchives over it.
+**Consequences:** `__main__` only feeds tic commands and draws what `GameFlow.state` says. Later wiring (audio, messages) consumes the event list that `GameFlow.tick()` returns instead of subscribing to each new sim's bus.

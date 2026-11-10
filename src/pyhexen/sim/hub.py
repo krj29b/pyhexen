@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from pyhexen.sim.mobj import Mobj, spawn_map_things
+from pyhexen.sim.mobj import Mobj, unset_thing_position
 from pyhexen.sim.transitions import (
     MapTransitionResult,
     execute_map_transition,
@@ -24,6 +24,19 @@ if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
     from pyhexen.wad.mapinfo import MapInfoTable
     from pyhexen.world.level import Level
+
+
+def remove_all_thinkers(sim: GameSim) -> None:
+    """Unlink every mobj from the level and empty the thinker list.
+
+    Port of RemoveAllThinkers (sv_save.c).
+    """
+    if sim.level is not None:
+        for thinker in list(sim.thinkers):
+            if isinstance(thinker, Mobj):
+                unset_thing_position(sim.level, thinker)
+    sim.thinkers.clear()
+    sim.tid_map.clear()
 
 
 class HubManager:
@@ -129,19 +142,20 @@ class HubManager:
         dest_sim.cluster = res.new_cluster
         dest_sim.acs_store = sim.acs_store
 
-        # Check if destination map has been visited before in this hub
-        if self.has_map(res.target_map):
-            self.load_map(dest_sim, res.target_map)
-        else:
-            spawn_map_things(dest_sim)
-            if dest_sim.level is not None and getattr(dest_sim.level, "behavior_bytes", None):
-                from pyhexen.sim.acs import parse_behavior
-                from pyhexen.sim.acs.vm import ACSVM
+        if dest_sim.acs_vm is not None and self.world_vars:
+            dest_sim.acs_vm.world_vars = list(self.world_vars)
 
-                beh = parse_behavior(dest_sim.level.behavior_bytes)
-                dest_sim.acs_vm = ACSVM(beh)
-                if self.world_vars:
-                    dest_sim.acs_vm.world_vars = list(self.world_vars)
+        # Both branches run a full level setup first, as vanilla does: SV_MapTeleport
+        # calls G_InitNew for a new map, and SV_LoadMap calls it before unarchiving.
+        # That clears the RNG, fills player starts and rebuilds tagged lines.
+        dest_sim.setup_level()
+        if self.has_map(res.target_map):
+            # RemoveAllThinkers, then unarchive. The RNG is not part of a vanilla
+            # map archive, so keep the post-setup RNG state.
+            remove_all_thinkers(dest_sim)
+            rng_state = dest_sim.rng.get_state()
+            self.load_map(dest_sim, res.target_map)
+            dest_sim.rng.set_state(rng_state)
 
         # Position carrying-over players at destination start spot
         for p_idx, player in enumerate(players):

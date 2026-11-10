@@ -66,6 +66,10 @@ class GameSim:
         self.paused: bool = False
 
         self.map_num: int = 1
+        self.cluster: int = 1
+        # Destinations for exit_normal / exit_secret; 0 means "map_num + 1".
+        self.next_map: int = 0
+        self.secret_map: int = 0
         if self.level is not None and getattr(self.level, "name", "").startswith("MAP"):
             try:
                 self.map_num = int(self.level.name[3:])
@@ -82,6 +86,26 @@ class GameSim:
                 self.acs_vm = ACSVM(behavior)
             except Exception:
                 self.acs_vm = None
+
+    def setup_level(self, player_nums: Sequence[int] = ()) -> None:
+        """Map-entry setup shared by new games and map changes.
+
+        Port of the level part of G_InitNew (g_game.c) and P_SetupLevel (p_setup.c):
+        M_ClearRandom, P_LoadThings, P_LoadACScripts (open scripts), P_SpawnSpecials.
+        Players listed in `player_nums` are spawned right after the map things.
+        Polyobjects are already initialised by `load_level`.
+        """
+        from pyhexen.sim.mobj import spawn_map_things
+        from pyhexen.sim.player import spawn_player
+        from pyhexen.sim.specials.sector_specials import p_spawn_specials
+
+        self.rng.clear()
+        spawn_map_things(self)
+        for num in player_nums:
+            spawn_player(self, num)
+        if self.acs_vm is not None:
+            self.acs_vm.start_open_scripts(self)
+        p_spawn_specials(self)
 
     def setup_level_specials(self) -> None:
         """Port of P_SpawnSpecials (p_spec.c)."""

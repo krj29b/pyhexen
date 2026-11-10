@@ -239,3 +239,45 @@ def test_cluster_change_clears_hub_and_applies_rules() -> None:
     assert not any(slot.type == ArtiType.ARTI_FLY for slot in p3.inventory)
     # Invulnerability artifact kept
     assert any(slot.type == ArtiType.ARTI_INVULNERABILITY for slot in p3.inventory)
+
+
+def _fresh_setup_rng_state(wad: WadStack, map_num: int) -> tuple[int, int]:
+    """RNG state right after a clean level setup (G_InitNew + P_SetupLevel)."""
+    sim = GameSim(level=load_level(wad, f"MAP{map_num:02d}"))
+    sim.rng.p_random()  # make sure setup_level really clears it
+    sim.setup_level()
+    return sim.rng.get_state()
+
+
+def test_map_entry_rng_and_revisit_player_start_match_vanilla() -> None:
+    """New maps clear the RNG (G_InitNew); revisits do not restore the archived RNG
+    (SV_LoadMap does not archive it) and still know the map's player starts."""
+    wad, mapinfo = _build_synthetic_hub_wad()
+
+    def load_level_cb(map_num: int) -> Level:
+        return load_level(wad, f"MAP{map_num:02d}")
+
+    hub = HubManager(current_cluster=1)
+    sim1 = GameSim(level=load_level_cb(1))
+    sim1.map_num = 1
+    sim1.setup_level(player_nums=(0,))
+    for _ in range(50):
+        sim1.rng.p_random()
+
+    sim2, _ = hub.transition_map(
+        sim1, target_map=2, position=0, mapinfo_table=mapinfo, load_level_cb=load_level_cb
+    )
+    assert sim2.rng.get_state() == _fresh_setup_rng_state(wad, 2)
+    for _ in range(30):
+        sim2.rng.p_random()
+
+    sim1_back, _ = hub.transition_map(
+        sim2, target_map=1, position=0, mapinfo_table=mapinfo, load_level_cb=load_level_cb
+    )
+    assert sim1_back.rng.get_state() == _fresh_setup_rng_state(wad, 1)
+    assert (0, 0) in sim1_back.player_starts
+    mo = sim1_back.players[0].mo
+    assert mo is not None
+    assert (mo.x // FRACUNIT, mo.y // FRACUNIT) == (128, 128)
+    # Only the restored thinkers remain: nothing from the throwaway setup is linked.
+    assert mo in sim1_back.thinkers

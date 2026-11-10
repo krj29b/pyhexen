@@ -279,8 +279,9 @@ def test_execute_map_transition() -> None:
     assert not res1.victory
     assert player.keys == 0b11
 
-    # Transition to Map 13 via warptrans 7 (different cluster)
-    res2 = execute_map_transition(sim, target_map=7, position=1, mapinfo_table=table)
+    # Transition to Map 13 (different cluster). The target is a real map number,
+    # never a warp number: G_Completed(args[0], ...) does no translation.
+    res2 = execute_map_transition(sim, target_map=13, position=1, mapinfo_table=table)
     assert res2.cluster_changed
     assert res2.target_map == 13
     assert res2.position == 1

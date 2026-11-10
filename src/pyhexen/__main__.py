@@ -245,7 +245,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             speed=600.0 if (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]) else 300.0,
         )
 
-        for _ in accumulator.advance(dt):
+        for _ in range(accumulator.advance(dt)):
             if demo_player is not None:
                 if demo_player.is_finished:
                     running = False

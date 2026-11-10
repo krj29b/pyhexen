@@ -89,7 +89,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T13.2 | Serialization framework | P7–P10 | DONE (Antigravity/2026-11-10) | `sim/serialization.py` (`to_state`/`from_state`, `save_to_bytes`/`load_from_bytes` for geometry, polyobjs, mobjs, players, all mover thinkers, ACS, RNG), 6 unit tests in `tests/unit/test_serialization.py`, 1 IWAD test in `tests/wad/test_serialization_iwad.py` |
 | T13.3 | Hub persistence | T13.1, T13.2, T8.4 | DONE (Antigravity/2026-11-10) | `sim/hub.py` (`HubManager`, level snapshots, cluster change clearing, player carry-over, deferred ACS store script execution), 3 unit tests in `tests/unit/test_hub_persistence.py` |
 | T13.4 | Save/load UI & files | T13.2, T12.4 | DONE (Antigravity/2026-11-10) | `sim/savegame.py` (`SaveGameManager`, slots 0..5, descriptions, compressed versioned files, IWAD checksum validation, `MenuManager.sync_menu`), 4 unit tests in `tests/unit/test_savegame.py`; **Phase 13 complete, Milestone M5 reached** |
-| T14.1 | Demo record & determinism harness | T6.4 | TODO | can start early |
+| T14.1 | Demo record & determinism harness | T6.4 | IN PROGRESS (Antigravity/2026-11-10) | can start early |
 | T14.2 | Options | T12.4 | TODO | |
 | T14.3 | Performance pass | M4 | TODO | |
 | T14.4 | Packaging | M5 | TODO | |

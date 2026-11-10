@@ -91,7 +91,7 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T13.4 | Save/load UI & files | T13.2, T12.4 | DONE (Antigravity/2026-11-10) | `sim/savegame.py` (`SaveGameManager`, slots 0..5, descriptions, compressed versioned files, IWAD checksum validation, `MenuManager.sync_menu`), 4 unit tests in `tests/unit/test_savegame.py`; **Phase 13 complete, Milestone M5 reached** |
 | T14.1 | Demo record & determinism harness | T6.4 | DONE (Antigravity/2026-11-10) | `sim/demo.py` (`Demo`, `DemoHeader`, `DemoRecorder`, `DemoPlayer`, `play_demo_to_completion`), CLI flags `--record`, `--playdemo`, `--timedemo`, 4 unit tests in `tests/unit/test_demo.py` |
 | T14.2 | Options | T12.4 | DONE (Antigravity/2026-11-10) | Configurable video & controls options (resolution, fullscreen, FOV, authentic low-res mode, pixel-aspect correction, true pitch vs shear, filtering, mouse sensitivity & invert, keybindings), `config.toml` persistence, `MenuType.VIDEO` submenu, live apply callback; 6 unit tests in `tests/unit/test_options.py` |
-| T14.3 | Performance pass | M4 | TODO | |
+| T14.3 | Performance pass | M4 | IN PROGRESS (Antigravity/2026-11-10) | |
 | T14.4 | Packaging | M5 | TODO | |
 | T14.5 | Full playthrough | all | TODO | **M6** |
 

@@ -9,6 +9,8 @@ saves/
 *.sav
 *.hxs
 config.toml
+crash.log
+*.log
 
 # Python / uv / build artifacts
 __pycache__/

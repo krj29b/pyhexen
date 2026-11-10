@@ -94,6 +94,11 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T14.3 | Performance pass | M4 | DONE (Antigravity/2026-11-10) | `tools/profile_perf.py`; converted `MobjFlag`/`MobjFlag2` from `IntFlag` to int constants (sim 7.85 ms -> 1.94 ms); cached action invokers eliminating `inspect.signature`; chunk frustum culling & VAO caching; sprite dynamic VBO/VAO & struct packing; sky shader uniform batching; MAP01: sim 2.06 ms/tic (budget <10 ms), render 6.67 ms/frame (budget <8 ms); MAP03: 2.20 ms / 4.53 ms; MAP40: 1.04 ms / 7.99 ms |
 | T14.4 | Packaging | M5 | DONE (Antigravity/2026-11-10) | `pyhexen.spec` (Windows onedir build, GLSL shaders and config template datas, strict `*.wad` exclusion), `app/dialog.py` (first-run GUI/CLI IWAD locator and lump validator), `app/crash.py` (crash report and unhandled exception guard writing `crash.log`), 13 unit tests in `tests/unit/test_packaging.py` |
 | T14.5 | Full playthrough | all | DONE (Antigravity/2026-11-10) | `tools/playthrough_audit.py` (live audit of 32 maps across Fighter/Cleric/Mage & 15 hub transitions, 111/111 passing), `docs/PLAYTHROUGH.md` (hub-by-hub matrix & mechanics), 2 unit tests in `tests/unit/test_playthrough.py`; **Milestone M6 reached, core plan complete** |
+| S1 | Vanilla demo sync | T14.1, T14.5 | IN PROGRESS (Antigravity/2026-11-10) | Parse and play vanilla Hexen DEMO1..3 lumps matching original format and behavior |
+| S2 | Multiplayer | T14.1 | TODO | Lockstep TicCmd exchange over UDP/sockets |
+| S3 | Deathkings expansion | T14.5 | TODO | Support and PWAD loading for Deathkings of the Dark Citadel |
+| S4 | Mod & PWAD support | T2.6, T8.1 | TODO | Custom MAPINFO/ACS PWAD support |
+| S5 | Visual extras | T14.2 | TODO | Dynamic lights, optional smooth filtering, widescreen status bar |
 
 ## Session log
 <!-- Append: date · agent · task(s) · one-line summary -->

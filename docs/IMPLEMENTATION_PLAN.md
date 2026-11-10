@@ -789,6 +789,43 @@ dialog, and a crash log file. Never include game data.
 **T14.5 Full playthrough**: a hub-by-hub checklist for each class, with bugs filed as new
 tasks `T14.5.x`. **Milestone M6.**
 
+### P15 — Integration and audit remediation
+
+Added after `docs/AUDIT_2026-11-10.md`. Many modules built in P11–P14 are tested as library code
+but never wired into the running game. M6 is not met until T15.1–T15.3 and T15.7 are done.
+
+**T15.1 Game-flow controller**: a controller in `app/` that drives title loop → menu → new
+game (class and skill select) → level → `MapExit` → intermission → `HubManager` → next level,
+plus player death and reborn. Accept: from a fresh launch with no `--warp`, you can start a
+new game from the menu and leave MAP01 through a normal exit into the next map, with hub
+state kept. A test drives `MapExit` through the controller, not `HubManager` directly.
+
+**T15.2 Audio wiring**: route sim sound events to `audio/channels.py`, run sound sequences
+through `audio/sndseq_player.py`, and play MAPINFO music through `audio/music.py`. Accept:
+`__main__` creates the sound system; a test confirms a sim sound event reaches the mixer.
+
+**T15.3 UI wiring**: automap (Tab), pickup and ACS print messages (`ui/messages.py`), and the
+save/load menu callbacks connected to `SaveGameManager`. Accept: each one is reachable from the
+running game, with a test per wiring point.
+
+**T15.4 Fixed-point light thinkers**: port `LightFade` to 16.16 fixed point matching `T_Light`
+(`p_lights.c`, `FixedDiv` step and `tics2` end condition), and review the other light thinkers
+for floats. Accept: no `float` in `sim/specials/lights.py`; a test checks per-tic levels
+against values worked out from the reference.
+
+**T15.5 Save management layering**: move `SaveGameManager` (or at least its `ui.menu`
+dependency) out of `sim/` into `app/`. Accept: nothing under `sim/` imports `ui`, `render` or
+`audio`, even under `TYPE_CHECKING`; a test enforces this.
+
+**T15.6 Real demo-sync harness**: record per-tic player x/y/z and RNG index traces from
+Chocolate Hexen for DEMO1–3, compare them tic by tic, and report the first divergent tic.
+Make `check_determinism` stop treating an empty hash as a pass. Accept: S1 is verified
+against reference traces, or the first divergence is filed as a task.
+
+**T15.7 Real playthrough checklist**: replace the 35-tic smoke run in
+`tools/playthrough_audit.py` with a scripted or manual hub-by-hub checklist per class that
+uses the T15.1 game flow. File bugs as `T15.7.x`. **Milestone M6.**
+
 ### Stretch goals
 - **S1** Vanilla demo sync (built-in `DEMO1..3` playback matching the original).
 - **S2** Multiplayer (coop/deathmatch using lockstep TicCmd exchange).

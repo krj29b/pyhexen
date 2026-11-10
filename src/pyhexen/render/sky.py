@@ -233,6 +233,18 @@ class SkyRenderer:
         self.program["u_sky2_tex"].value = 1
         self.program["u_palette"].value = 2
 
+        self._u_view = self.program["u_view"]
+        self._u_proj = self.program["u_proj"]
+        self._u_camera_yaw = self.program["u_camera_yaw"]
+        self._u_fov_x = self.program["u_fov_x"]
+        self._u_pitch_offset = self.program["u_pitch_offset"]
+        self._u_sky1_offset = self.program["u_sky1_offset"]
+        self._u_sky2_offset = self.program["u_sky2_offset"]
+        self._u_double_sky = self.program["u_double_sky"]
+        self._u_use_sky2 = self.program["u_use_sky2"]
+        self._u_palette_index = self.program["u_palette_index"]
+        self._u_gamma = self.program["u_gamma"]
+
         self.sky1_tex: GpuTexture | None = None
         self.sky2_tex: GpuTexture | None = None
         self.sky1_scroll_delta: int = 0
@@ -354,9 +366,8 @@ class SkyRenderer:
             index_buffer=ibo,
         )
 
-    def render(
+    def prepare_frame(
         self,
-        vao: moderngl.VertexArray,
         tex_mgr: GpuTextureManager,
         *,
         view: np.ndarray,
@@ -367,32 +378,61 @@ class SkyRenderer:
         palette_index: int = 0,
         gamma: float = 1.0,
         use_sky2_override: bool | None = None,
-        vertices: int = -1,
-        first: int = 0,
-    ) -> None:
-        """Render sky geometry using the configured single or double sky layers."""
+    ) -> bool:
+        """Bind textures and set shader uniforms for sky rendering once per frame."""
         if self.sky1_tex is None:
-            return
+            return False
         sky2 = self.sky2_tex if self.sky2_tex is not None else self.sky1_tex
 
         self.sky1_tex.index_tex.use(location=0)
         sky2.index_tex.use(location=1)
         tex_mgr.palette_tex.use(location=2)
 
-        self.program["u_view"].write(np.ascontiguousarray(view.T, dtype=np.float32).tobytes())
-        self.program["u_proj"].write(np.ascontiguousarray(proj.T, dtype=np.float32).tobytes())
-        self.program["u_camera_yaw"].value = float(camera_yaw)
-        self.program["u_fov_x"].value = float(fov_x)
-        self.program["u_pitch_offset"].value = float(pitch_offset)
-        self.program["u_sky1_offset"].value = self.sky1_offset_texels
-        self.program["u_sky2_offset"].value = self.sky2_offset_texels
-        self.program["u_double_sky"].value = 1 if self.double_sky else 0
+        self._u_view.write(np.ascontiguousarray(view.T, dtype=np.float32).tobytes())
+        self._u_proj.write(np.ascontiguousarray(proj.T, dtype=np.float32).tobytes())
+        self._u_camera_yaw.value = float(camera_yaw)
+        self._u_fov_x.value = float(fov_x)
+        self._u_pitch_offset.value = float(pitch_offset)
+        self._u_sky1_offset.value = self.sky1_offset_texels
+        self._u_sky2_offset.value = self.sky2_offset_texels
+        self._u_double_sky.value = 1 if self.double_sky else 0
 
         use_sky2 = self.lightning.use_sky2 if use_sky2_override is None else use_sky2_override
-        self.program["u_use_sky2"].value = 1 if use_sky2 else 0
-        self.program["u_palette_index"].value = int(palette_index)
-        self.program["u_gamma"].value = float(gamma)
+        self._u_use_sky2.value = 1 if use_sky2 else 0
+        self._u_palette_index.value = int(palette_index)
+        self._u_gamma.value = float(gamma)
+        return True
 
+    def render(
+        self,
+        vao: moderngl.VertexArray,
+        tex_mgr: GpuTextureManager | None = None,
+        *,
+        view: np.ndarray | None = None,
+        proj: np.ndarray | None = None,
+        camera_yaw: float = 0.0,
+        fov_x: float = math.pi / 2.0,
+        pitch_offset: float = 0.0,
+        palette_index: int = 0,
+        gamma: float = 1.0,
+        use_sky2_override: bool | None = None,
+        vertices: int = -1,
+        first: int = 0,
+    ) -> None:
+        """Render sky geometry using the configured single or double sky layers."""
+        if view is not None and proj is not None and tex_mgr is not None:
+            if not self.prepare_frame(
+                tex_mgr,
+                view=view,
+                proj=proj,
+                camera_yaw=camera_yaw,
+                fov_x=fov_x,
+                pitch_offset=pitch_offset,
+                palette_index=palette_index,
+                gamma=gamma,
+                use_sky2_override=use_sky2_override,
+            ):
+                return
         vao.render(mode=moderngl.TRIANGLES, vertices=vertices, first=first)
 
     def render_fullscreen_quad(

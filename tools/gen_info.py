@@ -382,13 +382,13 @@ def generate_info_data() -> str:
         [
             "",
             "",
-            "class MobjFlag(IntFlag):",
+            "class MobjFlag:",
             '    """Port of MF_* flags (h2def.h)."""',
             "",
         ]
     )
     for name, val in mf_flags:
-        lines.append(f"    {name} = 0x{val:08X}")
+        lines.append(f"    {name}: int = 0x{val:08X}")
 
     lines.append("")
     lines.append("MF_TRANSSHIFT: int = 26")
@@ -397,13 +397,13 @@ def generate_info_data() -> str:
         [
             "",
             "",
-            "class MobjFlag2(IntFlag):",
+            "class MobjFlag2:",
             '    """Port of MF2_* flags (h2def.h)."""',
             "",
         ]
     )
     for name, val in mf2_flags:
-        lines.append(f"    {name} = 0x{val:08X}")
+        lines.append(f"    {name}: int = 0x{val:08X}")
 
     lines.extend(
         [

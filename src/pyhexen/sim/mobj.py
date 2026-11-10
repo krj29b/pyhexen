@@ -437,21 +437,17 @@ def find_mobj_from_tid(sim: GameSim, tid: int) -> list[Mobj]:
     return sim.find_mobjs_by_tid(tid)
 
 
-def _invoke_action(act: ActionCallable, sim: GameSim, mobj: Mobj) -> None:
-    """Invoke a registered state action callable, adapting to its parameter signature."""
+def _build_action_invoker(act: ActionCallable) -> Any:
     if getattr(act, "_is_stub", False):
-        act(sim, mobj)
-        return
+        return lambda sim, mobj: act(sim, mobj)
     try:
         sig = inspect.signature(act)
     except (ValueError, TypeError):
-        act(sim, mobj)
-        return
+        return lambda sim, mobj: act(sim, mobj)
 
     params = list(sig.parameters.values())
     if any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params):
-        act(sim, mobj)
-        return
+        return lambda sim, mobj: act(sim, mobj)
 
     pos_params = [
         p
@@ -459,19 +455,34 @@ def _invoke_action(act: ActionCallable, sim: GameSim, mobj: Mobj) -> None:
         if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
     if len(pos_params) == 0:
-        act()
-    elif len(pos_params) == 1:
+        return lambda sim, mobj: act()
+    if len(pos_params) == 1:
         if pos_params[0].name in ("sim", "game_sim"):
-            act(sim)
-        else:
-            act(mobj)
-    elif len(pos_params) == 2:
+            return lambda sim, mobj: act(sim)
+        return lambda sim, mobj: act(mobj)
+    if len(pos_params) == 2:
         if pos_params[0].name in ("mobj", "mo", "actor", "thing"):
-            act(mobj, sim)
-        else:
-            act(sim, mobj)
-    else:
-        act(sim, mobj, None)
+            return lambda sim, mobj: act(mobj, sim)
+        return lambda sim, mobj: act(sim, mobj)
+    return lambda sim, mobj: act(sim, mobj, None)
+
+
+_ACTION_INVOKERS: dict[Any, Any] = {}
+
+
+def _invoke_action(act: ActionCallable, sim: GameSim, mobj: Mobj) -> None:
+    """Invoke a registered state action callable, adapting to its parameter signature."""
+    invoker = getattr(act, "_cached_invoker", None)
+    if invoker is None:
+        invoker = _ACTION_INVOKERS.get(act)
+        if invoker is None:
+            invoker = _build_action_invoker(act)
+            _ACTION_INVOKERS[act] = invoker
+            try:
+                act._cached_invoker = invoker
+            except (AttributeError, TypeError):
+                pass
+    invoker(sim, mobj)
 
 
 def set_mobj_state(sim: GameSim, mobj: Mobj, state_num: int | StateNum) -> bool:

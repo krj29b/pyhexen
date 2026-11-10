@@ -199,6 +199,8 @@ class GpuTextureManager:
         if animdefs is None and wad is not None and wad.find("ANIMDEFS") is not None:
             animdefs = load_animdefs(wad)
         self._active_anims: list[_ActiveAnim] = []
+        self.animated_wall_indices: set[int] = set()
+        self.animated_flat_indices: set[int] = set()
         if animdefs:
             self._init_anims(animdefs)
 
@@ -272,6 +274,8 @@ class GpuTextureManager:
                             tics_remaining=1,
                         )
                     )
+        self.animated_wall_indices = {a.base_index for a in self._active_anims if not a.is_flat}
+        self.animated_flat_indices = {a.base_index for a in self._active_anims if a.is_flat}
 
     def update_animations(self, level_time: int = 0, rng: Random | None = None) -> None:
         """Advance texture/flat animation translation tables by one tic (P_AnimateSurfaces).
@@ -452,6 +456,10 @@ class GpuTextureManager:
         self.fogmap_tex.release()
 
 
+# 4x4 float32 identity matrix bytes (column-major in OpenGL)
+_IDENTITY_4X4_BYTES: bytes = np.eye(4, dtype=np.float32).tobytes()
+
+
 class WorldShaderProgram:
     """Wrapper around world.vert + world.frag for 8-bit palette & colormap lighting (T4.5)."""
 
@@ -470,28 +478,73 @@ class WorldShaderProgram:
         if "u_light_override" in self.program:
             self.program["u_light_override"].value = -1.0
 
+        # Cache uniform references for fast access
+        self._u_palette_index = self.program.get("u_palette_index", None)
+        self._u_extralight = self.program.get("u_extralight", None)
+        self._u_fixed_colormap = self.program.get("u_fixed_colormap", None)
+        self._u_use_fogmap = self.program.get("u_use_fogmap", None)
+        self._u_gamma = self.program.get("u_gamma", None)
+        self._u_alpha = self.program.get("u_alpha", None)
+        self._u_tex_size = self.program.get("u_tex_size", None)
+        self._u_model = self.program.get("u_model", None)
+        self._u_view = self.program.get("u_view", None)
+        self._u_proj = self.program.get("u_proj", None)
+        self._u_light_override = self.program.get("u_light_override", None)
+        self._model_is_identity: bool = False
+
+        self._last_bound_tex: GpuTexture | None = None
+        self._last_tex_w: int = -1
+        self._last_tex_h: int = -1
+        self._last_palette_index: int = -999999
+        self._last_extralight: int = -999999
+        self._last_fixed_colormap: int = -999999
+        self._last_use_fogmap: int = -999999
+        self._last_gamma: float = -999999.0
+        self._last_alpha: float = -999999.0
+
         identity = np.eye(4, dtype=np.float32)
         self.set_model(identity)
         self.set_camera(identity, identity)
         self.set_lighting()
 
-    def set_model(self, model: np.ndarray | None = None) -> None:
-        """Update model transform matrix (converts row-major 4x4 numpy to GL column-major)."""
-        if "u_model" not in self.program:
+    def set_model(self, model: np.ndarray | bytes | None = None) -> None:
+        """Update model transform matrix (converts 4x4 numpy or raw bytes to GL)."""
+        if self._u_model is None:
             return
         if model is None:
-            model = np.eye(4, dtype=np.float32)
-        self.program["u_model"].write(np.ascontiguousarray(model.T, dtype=np.float32).tobytes())
+            if not self._model_is_identity:
+                self._u_model.write(_IDENTITY_4X4_BYTES)
+                self._model_is_identity = True
+            return
+        self._model_is_identity = False
+        if isinstance(model, bytes):
+            self._u_model.write(model)
+        else:
+            self._u_model.write(np.ascontiguousarray(model.T, dtype=np.float32).tobytes())
 
     def set_light_override(self, light_level: float = -1.0) -> None:
         """Override vertex lighting if light_level >= 0.0, or use per-vertex light if -1.0."""
-        if "u_light_override" in self.program:
-            self.program["u_light_override"].value = float(light_level)
+        if self._u_light_override is not None:
+            self._u_light_override.value = float(light_level)
 
     def set_camera(self, view: np.ndarray, proj: np.ndarray) -> None:
         """Update view and projection matrices (converts row-major 4x4 numpy to GL column-major)."""
-        self.program["u_view"].write(np.ascontiguousarray(view.T, dtype=np.float32).tobytes())
-        self.program["u_proj"].write(np.ascontiguousarray(proj.T, dtype=np.float32).tobytes())
+        if self._u_view is not None:
+            self._u_view.write(np.ascontiguousarray(view.T, dtype=np.float32).tobytes())
+        if self._u_proj is not None:
+            self._u_proj.write(np.ascontiguousarray(proj.T, dtype=np.float32).tobytes())
+
+    def reset_state_cache(self) -> None:
+        """Reset cached uniforms and texture bindings."""
+        self._last_bound_tex = None
+        self._last_tex_w = -1
+        self._last_tex_h = -1
+        self._last_palette_index = -999999
+        self._last_extralight = -999999
+        self._last_fixed_colormap = -999999
+        self._last_use_fogmap = -999999
+        self._last_gamma = -999999.0
+        self._last_alpha = -999999.0
 
     def set_lighting(
         self,
@@ -504,23 +557,45 @@ class WorldShaderProgram:
         alpha: float = 1.0,
     ) -> None:
         """Configure palette flash index, extralight, fixedcolormap, fogmap, gamma, and alpha."""
-        self.program["u_palette_index"].value = int(palette_index)
-        self.program["u_extralight"].value = int(extralight)
-        self.program["u_fixed_colormap"].value = int(fixed_colormap)
-        self.program["u_use_fogmap"].value = 1 if use_fogmap else 0
-        self.program["u_gamma"].value = float(gamma)
-        if "u_alpha" in self.program:
-            self.program["u_alpha"].value = float(alpha)
+        if palette_index != self._last_palette_index and self._u_palette_index is not None:
+            self._u_palette_index.value = int(palette_index)
+            self._last_palette_index = palette_index
+        if extralight != self._last_extralight and self._u_extralight is not None:
+            self._u_extralight.value = int(extralight)
+            self._last_extralight = extralight
+        if fixed_colormap != self._last_fixed_colormap and self._u_fixed_colormap is not None:
+            self._u_fixed_colormap.value = int(fixed_colormap)
+            self._last_fixed_colormap = fixed_colormap
+        fog_int = 1 if use_fogmap else 0
+        if fog_int != self._last_use_fogmap and self._u_use_fogmap is not None:
+            self._u_use_fogmap.value = fog_int
+            self._last_use_fogmap = fog_int
+        if gamma != self._last_gamma and self._u_gamma is not None:
+            self._u_gamma.value = float(gamma)
+            self._last_gamma = gamma
+        if self._u_alpha is not None and alpha != self._last_alpha:
+            self._u_alpha.value = float(alpha)
+            self._last_alpha = alpha
 
     def bind_surface_texture(
         self,
         tex_mgr: GpuTextureManager,
         gpu_tex: GpuTexture,
+        *,
+        bind_tables: bool = True,
     ) -> None:
         """Bind lookup tables and the given surface texture + its dimensions."""
-        tex_mgr.bind_lookup_tables(palette_unit=2, colormap_unit=3, fogmap_unit=4)
-        gpu_tex.bind(index_unit=0, mask_unit=1)
-        self.program["u_tex_size"].value = (float(gpu_tex.width), float(gpu_tex.height))
+        if bind_tables:
+            tex_mgr.bind_lookup_tables(palette_unit=2, colormap_unit=3, fogmap_unit=4)
+        if gpu_tex is not self._last_bound_tex:
+            gpu_tex.bind(index_unit=0, mask_unit=1)
+            w = gpu_tex.width
+            h = gpu_tex.height
+            if (w != self._last_tex_w or h != self._last_tex_h) and self._u_tex_size is not None:
+                self._u_tex_size.value = (float(w), float(h))
+                self._last_tex_w = w
+                self._last_tex_h = h
+            self._last_bound_tex = gpu_tex
 
     def create_vao(
         self,

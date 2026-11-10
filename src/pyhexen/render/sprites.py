@@ -10,6 +10,7 @@ Port of R_ProjectSprite and R_DrawVisSprite (r_things.c).
 from __future__ import annotations
 
 import math
+import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -82,33 +83,27 @@ def _extract_interpolated_pos(
 ) -> tuple[float, float, float]:
     """Extract interpolated map-space (x, y, z) in float map units."""
     a = max(0.0, min(1.0, float(alpha)))
-    if hasattr(mobj_or_pos, "x") and hasattr(mobj_or_pos, "y") and hasattr(mobj_or_pos, "z"):
-        mo: Any = mobj_or_pos
-        x_cur = float(mo.x)
-        y_cur = float(mo.y)
-        z_cur = float(mo.z)
-        x_prev = float(getattr(mo, "prev_x", mo.x))
-        y_prev = float(getattr(mo, "prev_y", mo.y))
-        z_prev = float(getattr(mo, "prev_z", mo.z))
-
-        ix = (x_prev + (x_cur - x_prev) * a) / float(FRACUNIT)
-        iy = (y_prev + (y_cur - y_prev) * a) / float(FRACUNIT)
-        iz_fixed = z_prev + (z_cur - z_prev) * a - float(getattr(mo, "floorclip", 0))
-
-        # Apply floatbob visual offset if MF2_FLOATBOB is set (R_ProjectSprite / P_MobjThinker)
-        flags2 = int(getattr(mo, "flags2", 0))
-        if flags2 & MobjFlag2.MF2_FLOATBOB:
-            bob_idx = (level_time + int(getattr(mo, "health", 0))) & 63
+    if isinstance(mobj_or_pos, Mobj):
+        mo = mobj_or_pos
+        x_prev = float(mo.prev_x)
+        y_prev = float(mo.prev_y)
+        z_prev = float(mo.prev_z)
+        ix = (x_prev + (float(mo.x) - x_prev) * a) / 65536.0
+        iy = (y_prev + (float(mo.y) - y_prev) * a) / 65536.0
+        iz_fixed = z_prev + (float(mo.z) - z_prev) * a - float(mo.floorclip)
+        if mo.flags2 & MobjFlag2.MF2_FLOATBOB:
+            bob_idx = (level_time + mo.health) & 63
             iz_fixed += float(FLOAT_BOB_OFFSETS[bob_idx])
+        return ix, iy, iz_fixed / 65536.0
 
-        iz = iz_fixed / float(FRACUNIT)
-        return ix, iy, iz
-
-    seq = tuple(mobj_or_pos)  # type: ignore[arg-type]
+    seq = mobj_or_pos
     return float(seq[0]), float(seq[1]), float(seq[2])
 
 
-def build_sprite_quad(
+_SPRITE_QUAD_STRUCT: struct.Struct = struct.Struct("<48f")
+
+
+def build_sprite_quad_bytes(
     mobj_or_pos: Mobj | Sequence[float | int],
     pic: Picture,
     camera: Camera,
@@ -120,21 +115,22 @@ def build_sprite_quad(
     *,
     tex_id: float = 0.0,
     level_time: int = 0,
-) -> np.ndarray:
-    """Build a camera-facing billboard quad (6 vertices x 8 floats) for a sprite.
-
-    Vertex layout matches `WorldShaderProgram`:
-      `[gl_x, gl_y, gl_z, u, v, light, surface_type, tex_id]`
-    where `(gl_x, gl_y, gl_z) = (map_x, map_z, -map_y)`.
-    """
+    cam_right: tuple[float, float] | None = None,
+    pos: tuple[float, float, float] | None = None,
+) -> bytes:
+    """Build a camera-facing billboard quad (6 vertices x 8 floats) as raw bytes for a sprite."""
     _ = shadow
-    ix, iy, iz = _extract_interpolated_pos(mobj_or_pos, alpha, level_time=level_time)
-    _, _, _, iyaw, _ = camera.interpolated_state(alpha)
+    if pos is not None:
+        ix, iy, iz = pos
+    else:
+        ix, iy, iz = _extract_interpolated_pos(mobj_or_pos, alpha, level_time=level_time)
 
-    # Camera right vector in map (x, y) coordinates:
-    # Forward = (cos(yaw), sin(yaw)), Right = (sin(yaw), -cos(yaw))
-    rx = math.sin(iyaw)
-    ry = -math.cos(iyaw)
+    if cam_right is not None:
+        rx, ry = cam_right
+    else:
+        _, _, _, iyaw, _ = camera.interpolated_state(alpha)
+        rx = math.sin(iyaw)
+        ry = -math.cos(iyaw)
 
     w = float(pic.width)
     h = float(pic.height)
@@ -142,7 +138,6 @@ def build_sprite_quad(
     top_ofs = float(pic.top)
 
     if flip:
-        # Mirror horizontal offset and U coordinates across the sprite origin
         ofs_l = -(w - left_ofs)
         ofs_r = left_ofs
         u0 = w
@@ -168,25 +163,95 @@ def build_sprite_quad(
     surf = float(SURFACE_MASKED_WALL)
     tid = float(tex_id)
 
-    # Convert map (x, y, z) -> GL (x, z, -y)
-    return np.array(
-        [
-            [x0, z_bot, -y0, u0, v_bot, eff_light, surf, tid],
-            [x1, z_bot, -y1, u1, v_bot, eff_light, surf, tid],
-            [x1, z_top, -y1, u1, v_top, eff_light, surf, tid],
-            [x0, z_bot, -y0, u0, v_bot, eff_light, surf, tid],
-            [x1, z_top, -y1, u1, v_top, eff_light, surf, tid],
-            [x0, z_top, -y0, u0, v_top, eff_light, surf, tid],
-        ],
-        dtype=np.float32,
+    ny0 = -y0
+    ny1 = -y1
+
+    return _SPRITE_QUAD_STRUCT.pack(
+        x0,
+        z_bot,
+        ny0,
+        u0,
+        v_bot,
+        eff_light,
+        surf,
+        tid,
+        x1,
+        z_bot,
+        ny1,
+        u1,
+        v_bot,
+        eff_light,
+        surf,
+        tid,
+        x1,
+        z_top,
+        ny1,
+        u1,
+        v_top,
+        eff_light,
+        surf,
+        tid,
+        x0,
+        z_bot,
+        ny0,
+        u0,
+        v_bot,
+        eff_light,
+        surf,
+        tid,
+        x1,
+        z_top,
+        ny1,
+        u1,
+        v_top,
+        eff_light,
+        surf,
+        tid,
+        x0,
+        z_top,
+        ny0,
+        u0,
+        v_top,
+        eff_light,
+        surf,
+        tid,
     )
+
+
+def build_sprite_quad(
+    mobj_or_pos: Mobj | Sequence[float | int],
+    pic: Picture,
+    camera: Camera,
+    light_level: float,
+    fullbright: bool,
+    flip: bool,
+    alpha: float = 1.0,
+    shadow: bool = False,
+    *,
+    tex_id: float = 0.0,
+    level_time: int = 0,
+) -> np.ndarray:
+    """Build a camera-facing billboard quad (6 vertices x 8 floats) for a sprite."""
+    raw = build_sprite_quad_bytes(
+        mobj_or_pos,
+        pic,
+        camera,
+        light_level,
+        fullbright,
+        flip,
+        alpha,
+        shadow,
+        tex_id=tex_id,
+        level_time=level_time,
+    )
+    return np.frombuffer(raw, dtype=np.float32).reshape(6, 8)
 
 
 @dataclass(slots=True)
 class _TranslucentSpriteItem:
     dist_sq: float
     gpu_tex: GpuTexture
-    quad: np.ndarray
+    quad: bytes | np.ndarray
     alpha_val: float
 
 
@@ -202,11 +267,13 @@ class SpriteRenderer:
         self.ctx = ctx
         self.sprite_registry = sprite_registry
         self.tex_mgr = tex_mgr
-        self._pic_cache: dict[str, tuple[Picture, GpuTexture]] = {}
+        self._pic_cache: dict[int, tuple[Picture, GpuTexture]] = {}
+        self._dynamic_vbo: moderngl.Buffer | None = None
+        self._dynamic_vao: moderngl.VertexArray | None = None
 
     def _get_sprite_picture_and_tex(self, lump: LumpInfo) -> tuple[Picture, GpuTexture]:
-        key = f"{lump.source}:{lump.index}:{lump.name}"
-        cached = self._pic_cache.get(key)
+        lump_id = id(lump)
+        cached = self._pic_cache.get(lump_id)
         if cached is not None:
             return cached
 
@@ -218,6 +285,7 @@ class SpriteRenderer:
             raise RuntimeError(f"Cannot read sprite lump {lump.name!r} without WAD")
 
         pic = decode_picture(raw)
+        key = f"{lump.source}:{lump.index}:{lump.name}"
         gpu_tex = self.tex_mgr.upload_indexed(
             key,
             pic.indices,
@@ -226,7 +294,7 @@ class SpriteRenderer:
             top=pic.top,
             repeat=False,
         )
-        self._pic_cache[key] = (pic, gpu_tex)
+        self._pic_cache[lump_id] = (pic, gpu_tex)
         return pic, gpu_tex
 
     def _build_static_mobjs_from_level(self, level: Level) -> list[Mobj]:
@@ -294,27 +362,57 @@ class SpriteRenderer:
     ) -> tuple[list[tuple[GpuTexture, np.ndarray]], list[_TranslucentSpriteItem]]:
         """Collect opaque texture batches and back-to-front sorted translucent sprites."""
         if mobjs is not None:
-            active_mobjs: Sequence[Mobj] = mobjs
+            source_mobjs = mobjs
             level_time = sim.level_time if sim is not None else 0
         elif sim is not None:
-            active_mobjs = [t for t in sim.thinkers if isinstance(t, Mobj) and not t.removed]
+            source_mobjs = sim.thinkers
             level_time = sim.level_time
         elif level is not None:
-            active_mobjs = self._build_static_mobjs_from_level(level)
+            source_mobjs = self._build_static_mobjs_from_level(level)
             level_time = 0
         else:
             return [], []
 
-        cam_x, cam_y, _, _, _ = camera.interpolated_state(alpha)
+        cam_x, cam_y, _, iyaw, _ = camera.interpolated_state(alpha)
         view_x_fixed = int(round(cam_x * FRACUNIT))
         view_y_fixed = int(round(cam_y * FRACUNIT))
 
-        opaque_by_tex: dict[int, tuple[GpuTexture, list[np.ndarray]]] = {}
+        cam_fx = math.cos(iyaw)
+        cam_fy = math.sin(iyaw)
+        cam_rx = math.sin(iyaw)
+        cam_ry = -math.cos(iyaw)
+        fov_deg = camera.fov_x_deg if hasattr(camera, "fov_x_deg") else 45.0
+        tan_fov = math.tan(math.radians(fov_deg * 0.5)) * 1.35
+        inv_frac = 1.0 / 65536.0
+        is_alpha_one = alpha >= 1.0 or alpha <= 0.0
+
+        opaque_by_tex: dict[int, tuple[GpuTexture, list[bytes]]] = {}
         translucent_list: list[_TranslucentSpriteItem] = []
 
-        for mo in active_mobjs:
+        for mo in source_mobjs:
+            if not isinstance(mo, Mobj) or mo.removed:
+                continue
             if mo.flags2 & MobjFlag2.MF2_DONTDRAW:
                 continue
+
+            # Frustum culling: fast 2D test against camera plane
+            if is_alpha_one:
+                mx = float(mo.x) * inv_frac
+                my = float(mo.y) * inv_frac
+            else:
+                x_prev = float(mo.prev_x)
+                y_prev = float(mo.prev_y)
+                mx = (x_prev + (float(mo.x) - x_prev) * alpha) * inv_frac
+                my = (y_prev + (float(mo.y) - y_prev) * alpha) * inv_frac
+
+            dx = mx - cam_x
+            dy = my - cam_y
+            depth = dx * cam_fx + dy * cam_fy
+            if depth < -128.0:
+                continue
+            if abs(dx * cam_rx + dy * cam_ry) > depth * tan_fov + 128.0:
+                continue
+
             if mo.sprite < 0 or mo.sprite >= len(self.sprite_registry):
                 continue
             sprdef = self.sprite_registry.get(mo.sprite)
@@ -342,47 +440,140 @@ class SpriteRenderer:
             fullbright = bool(use_fullbright and (mo.frame & FF_FULLBRIGHT))
             is_shadow = bool(mo.flags & (MobjFlag.MF_SHADOW | MobjFlag.MF_ALTSHADOW))
 
-            quad = build_sprite_quad(
-                mo,
-                pic,
-                camera,
-                light_level=light_level,
-                fullbright=fullbright,
-                flip=flip,
-                alpha=alpha,
-                shadow=is_shadow,
-                level_time=level_time,
+            if is_alpha_one:
+                iz_fixed = float(mo.z - mo.floorclip)
+            else:
+                z_prev = float(mo.prev_z)
+                iz_fixed = z_prev + (float(mo.z) - z_prev) * alpha - float(mo.floorclip)
+            if mo.flags2 & MobjFlag2.MF2_FLOATBOB:
+                bob_idx = (level_time + mo.health) & 63
+                iz_fixed += float(FLOAT_BOB_OFFSETS[bob_idx])
+            pos = (mx, my, iz_fixed * inv_frac)
+
+            w = float(pic.width)
+            h = float(pic.height)
+            left_ofs = float(pic.left)
+            top_ofs = float(pic.top)
+
+            if flip:
+                ofs_l = -(w - left_ofs)
+                ofs_r = left_ofs
+                u0 = w
+                u1 = 0.0
+            else:
+                ofs_l = -left_ofs
+                ofs_r = w - left_ofs
+                u0 = 0.0
+                u1 = w
+
+            x0 = mx + cam_rx * ofs_l
+            y0 = my + cam_ry * ofs_l
+            x1 = mx + cam_rx * ofs_r
+            y1 = my + cam_ry * ofs_r
+
+            z_top = pos[2] + top_ofs
+            z_bot = z_top - h
+
+            eff_light = 256.0 if fullbright else light_level
+            ny0 = -y0
+            ny1 = -y1
+
+            quad_bytes = _SPRITE_QUAD_STRUCT.pack(
+                x0,
+                z_bot,
+                ny0,
+                u0,
+                h,
+                eff_light,
+                3.0,
+                0.0,
+                x1,
+                z_bot,
+                ny1,
+                u1,
+                h,
+                eff_light,
+                3.0,
+                0.0,
+                x1,
+                z_top,
+                ny1,
+                u1,
+                0.0,
+                eff_light,
+                3.0,
+                0.0,
+                x0,
+                z_bot,
+                ny0,
+                u0,
+                h,
+                eff_light,
+                3.0,
+                0.0,
+                x1,
+                z_top,
+                ny1,
+                u1,
+                0.0,
+                eff_light,
+                3.0,
+                0.0,
+                x0,
+                z_top,
+                ny0,
+                u0,
+                0.0,
+                eff_light,
+                3.0,
+                0.0,
             )
 
             if is_shadow:
-                ix, iy, _ = _extract_interpolated_pos(mo, alpha, level_time=level_time)
-                dist_sq = (ix - cam_x) ** 2 + (iy - cam_y) ** 2
+                dist_sq = (pos[0] - cam_x) ** 2 + (pos[1] - cam_y) ** 2
                 translucent_list.append(
                     _TranslucentSpriteItem(
                         dist_sq=dist_sq,
                         gpu_tex=gpu_tex,
-                        quad=quad,
+                        quad=quad_bytes,
                         alpha_val=SHADOW_ALPHA,
                     )
                 )
             else:
                 tex_key = id(gpu_tex)
                 if tex_key not in opaque_by_tex:
-                    opaque_by_tex[tex_key] = (gpu_tex, [quad])
+                    opaque_by_tex[tex_key] = (gpu_tex, [quad_bytes])
                 else:
-                    opaque_by_tex[tex_key][1].append(quad)
+                    opaque_by_tex[tex_key][1].append(quad_bytes)
 
-        opaque_batches: list[tuple[GpuTexture, np.ndarray]] = [
-            (gtex, np.concatenate(quads, axis=0)) for gtex, quads in opaque_by_tex.values()
+        opaque_batches: list[tuple[GpuTexture, bytes, int]] = [
+            (gtex, b"".join(quads), len(quads) * 6) for gtex, quads in opaque_by_tex.values()
         ]
         # Sort translucent sprites back-to-front (largest distance first)
         translucent_list.sort(key=lambda item: item.dist_sq, reverse=True)
         return opaque_batches, translucent_list
 
+    def _get_dynamic_vao(
+        self,
+        shader: WorldShaderProgram,
+        data_bytes: bytes,
+    ) -> moderngl.VertexArray:
+        size = len(data_bytes)
+        if self._dynamic_vbo is None or self._dynamic_vbo.size < size:
+            if self._dynamic_vao is not None:
+                self._dynamic_vao.release()
+            if self._dynamic_vbo is not None:
+                self._dynamic_vbo.release()
+            alloc_size = max(size, 65536)
+            self._dynamic_vbo = self.ctx.buffer(reserve=alloc_size, dynamic=True)
+            self._dynamic_vao = shader.create_vao(self._dynamic_vbo)
+        self._dynamic_vbo.write(data_bytes)
+        return self._dynamic_vao
+
     def render_opaque(
         self,
         shader: WorldShaderProgram,
-        opaque_batches: Sequence[tuple[GpuTexture, np.ndarray]],
+        opaque_batches: Sequence[Any],
         *,
         palette_index: int = 0,
         extralight: int = 0,
@@ -401,15 +592,18 @@ class SpriteRenderer:
             gamma=gamma,
             alpha=1.0,
         )
-        for gpu_tex, verts in opaque_batches:
-            vbo = self.ctx.buffer(np.ascontiguousarray(verts, dtype=np.float32).tobytes())
-            vao = shader.create_vao(vbo)
-            try:
-                shader.bind_surface_texture(self.tex_mgr, gpu_tex)
-                vao.render(mode=moderngl.TRIANGLES)
-            finally:
-                vao.release()
-                vbo.release()
+        for item in opaque_batches:
+            gpu_tex = item[0]
+            data = item[1]
+            vert_count = item[2] if len(item) > 2 else (len(data) // 32)
+            raw_bytes = (
+                data
+                if isinstance(data, bytes)
+                else np.ascontiguousarray(data, dtype=np.float32).tobytes()
+            )
+            vao = self._get_dynamic_vao(shader, raw_bytes)
+            shader.bind_surface_texture(self.tex_mgr, gpu_tex)
+            vao.render(mode=moderngl.TRIANGLES, vertices=vert_count)
 
     def render_translucent(
         self,
@@ -438,14 +632,15 @@ class SpriteRenderer:
                     gamma=gamma,
                     alpha=item.alpha_val,
                 )
-                vbo = self.ctx.buffer(np.ascontiguousarray(item.quad, dtype=np.float32).tobytes())
-                vao = shader.create_vao(vbo)
-                try:
-                    shader.bind_surface_texture(self.tex_mgr, item.gpu_tex)
-                    vao.render(mode=moderngl.TRIANGLES)
-                finally:
-                    vao.release()
-                    vbo.release()
+                if isinstance(item.quad, bytes):
+                    raw_bytes = item.quad
+                    num_verts = 6
+                else:
+                    raw_bytes = np.ascontiguousarray(item.quad, dtype=np.float32).tobytes()
+                    num_verts = len(item.quad)
+                vao = self._get_dynamic_vao(shader, raw_bytes)
+                shader.bind_surface_texture(self.tex_mgr, item.gpu_tex)
+                vao.render(mode=moderngl.TRIANGLES, vertices=num_verts)
         finally:
             self.ctx.depth_mask = True
             self.ctx.disable(moderngl.BLEND)
@@ -459,7 +654,13 @@ class SpriteRenderer:
             )
 
     def release(self) -> None:
-        """Release cached sprite GPU textures."""
+        """Release cached sprite GPU textures and dynamic buffers."""
+        if self._dynamic_vao is not None:
+            self._dynamic_vao.release()
+            self._dynamic_vao = None
+        if self._dynamic_vbo is not None:
+            self._dynamic_vbo.release()
+            self._dynamic_vbo = None
         for _, gpu_tex in self._pic_cache.values():
             gpu_tex.release()
         self._pic_cache.clear()

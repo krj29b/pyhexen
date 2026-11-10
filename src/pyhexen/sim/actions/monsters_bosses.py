@@ -736,10 +736,10 @@ def a_minotaurroam(sim: GameSim, actor: Mobj) -> None:
         master = _resolve_mobj(actor.special1)
         if master is not None:
             actor.movedir = point_to_angle2(actor.x, actor.y, master.x, master.y) >> 29
-    from pyhexen.sim.enemy import m_walk, new_chase_dir
+    from pyhexen.sim.enemy import move, new_chase_dir
 
-    if not m_walk(sim, actor):
-        new_chase_dir(sim, actor)
+    if not move(actor, sim):
+        new_chase_dir(actor, sim)
 
 
 @action("A_MinotaurLook")
@@ -834,10 +834,10 @@ def a_minotaurchase(sim: GameSim, actor: Mobj) -> None:
             set_mobj_state(sim, actor, actor.info.missilestate)
             return
 
-    from pyhexen.sim.enemy import m_walk, new_chase_dir
+    from pyhexen.sim.enemy import move, new_chase_dir
 
-    if not m_walk(sim, actor):
-        new_chase_dir(sim, actor)
+    if not move(actor, sim):
+        new_chase_dir(actor, sim)
 
     if actor.info.activesound and sim.rng.p_random() < 6:
         _emit_sound(sim, actor, actor.info.activesound)

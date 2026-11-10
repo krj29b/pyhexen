@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import struct
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,7 @@ import moderngl
 import numpy as np
 
 from pyhexen.core.events import EventBus
+from pyhexen.core.fixed import FRACUNIT
 from pyhexen.core.random import Random
 from pyhexen.render.camera import Camera
 from pyhexen.render.chunks import ChunkManager, DrawBatch, SectorChunk
@@ -32,7 +34,6 @@ from pyhexen.render.sprites import SpriteRenderer
 from pyhexen.render.textures import (
     SURFACE_FLAT,
     SURFACE_MASKED_WALL,
-    SURFACE_SKY,
     SURFACE_WALL,
     GpuTexture,
     GpuTextureManager,
@@ -46,6 +47,9 @@ from pyhexen.world.level import Level, Sector
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
+
+
+_STRUCT_MAT4: struct.Struct = struct.Struct("<16f")
 
 
 class WorldRenderer:
@@ -293,12 +297,34 @@ void main() {
                     mesh.vao = self.world_shader.create_vao(mesh.vbo)
                 self.poly_meshes[po.tag] = mesh
 
+        # Pre-resolve static batch textures
+        anim_walls = getattr(self.tex_mgr, "animated_wall_indices", set())
+        anim_flats = getattr(self.tex_mgr, "animated_flat_indices", set())
+        for chunk in self.chunks.chunks:
+            for batch in chunk.batches:
+                is_anim = False
+                if batch.surface_type == SURFACE_FLAT:
+                    is_anim = batch.tex_id in anim_flats
+                elif batch.surface_type in (SURFACE_WALL, SURFACE_MASKED_WALL):
+                    is_anim = batch.tex_id in anim_walls
+                batch.is_animated = is_anim
+                if not is_anim:
+                    batch.gpu_tex = self._resolve_batch_texture(batch)
+
     def _release_poly_vaos(self) -> None:
         for mesh in self.poly_meshes.values():
             mesh.release()
         self.poly_meshes.clear()
 
     def _release_chunk_vaos(self) -> None:
+        if self.chunks is not None:
+            for chunk in self.chunks.chunks:
+                if chunk.world_vao is not None and hasattr(chunk.world_vao, "release"):
+                    chunk.world_vao.release()
+                    chunk.world_vao = None
+                if chunk.sky_vao is not None and hasattr(chunk.sky_vao, "release"):
+                    chunk.sky_vao.release()
+                    chunk.sky_vao = None
         for _, vao in self._chunk_world_vaos.values():
             vao.release()
         self._chunk_world_vaos.clear()
@@ -309,24 +335,32 @@ void main() {
     def _get_chunk_world_vao(self, chunk: SectorChunk) -> moderngl.VertexArray | None:
         if chunk.vbo is None:
             return None
+        if chunk.world_vao is not None:
+            return chunk.world_vao
         cached = self._chunk_world_vaos.get(chunk.sector_index)
         if cached is not None and cached[0] is chunk.vbo:
+            chunk.world_vao = cached[1]
             return cached[1]
         if cached is not None:
             cached[1].release()
         vao = self.world_shader.create_vao(chunk.vbo)
+        chunk.world_vao = vao
         self._chunk_world_vaos[chunk.sector_index] = (chunk.vbo, vao)
         return vao
 
     def _get_chunk_sky_vao(self, chunk: SectorChunk) -> moderngl.VertexArray | None:
         if chunk.vbo is None:
             return None
+        if chunk.sky_vao is not None:
+            return chunk.sky_vao
         cached = self._chunk_sky_vaos.get(chunk.sector_index)
         if cached is not None and cached[0] is chunk.vbo:
+            chunk.sky_vao = cached[1]
             return cached[1]
         if cached is not None:
             cached[1].release()
         vao = self.sky_renderer.create_vao(chunk.vbo, world_vertex_format=True)
+        chunk.sky_vao = vao
         self._chunk_sky_vaos[chunk.sector_index] = (chunk.vbo, vao)
         return vao
 
@@ -387,11 +421,24 @@ void main() {
 
         # 1. Rebuild any dirty sector chunks
         rebuilt = self.chunks.rebuild_dirty(self.ctx)
-        for sec_idx in rebuilt:
-            if sec_idx in self._chunk_world_vaos:
-                self._chunk_world_vaos.pop(sec_idx)[1].release()
-            if sec_idx in self._chunk_sky_vaos:
-                self._chunk_sky_vaos.pop(sec_idx)[1].release()
+        if rebuilt:
+            anim_walls = getattr(self.tex_mgr, "animated_wall_indices", set())
+            anim_flats = getattr(self.tex_mgr, "animated_flat_indices", set())
+            for sec_idx in rebuilt:
+                if sec_idx in self._chunk_world_vaos:
+                    self._chunk_world_vaos.pop(sec_idx)[1].release()
+                if sec_idx in self._chunk_sky_vaos:
+                    self._chunk_sky_vaos.pop(sec_idx)[1].release()
+                chunk = self.chunks.chunks[sec_idx]
+                for batch in chunk.batches:
+                    is_anim = False
+                    if batch.surface_type == SURFACE_FLAT:
+                        is_anim = batch.tex_id in anim_flats
+                    elif batch.surface_type in (SURFACE_WALL, SURFACE_MASKED_WALL):
+                        is_anim = batch.tex_id in anim_walls
+                    batch.is_animated = is_anim
+                    if not is_anim:
+                        batch.gpu_tex = self._resolve_batch_texture(batch)
 
         # 2. Clear color and depth buffers
         prev_viewport = self.ctx.viewport
@@ -412,63 +459,105 @@ void main() {
             fov_deg=self.fov_deg,
             alpha=alpha,
         )
-        _, _, _, iyaw, ipitch = camera.interpolated_state(alpha)
+        cam_x, cam_y, _, iyaw, ipitch = camera.interpolated_state(alpha)
         fov_x_rad = math.radians(self.fov_deg)
         pitch_offset = math.tan(ipitch) * 160.0
+        cam_fx = math.cos(iyaw)
+        cam_fy = math.sin(iyaw)
+        cam_rx = math.sin(iyaw)
+        cam_ry = -math.cos(iyaw)
+        tan_half_fov = math.tan(fov_x_rad * 0.5) * 1.3
 
-        # 3. Draw sky polygons (SURFACE_SKY = 2.0) writing depth so sky ceilings/caps occlude
+        # Frustum culling: filter visible sector chunks
+        visible_chunks: list[SectorChunk] = []
         for chunk in self.chunks.chunks:
             if chunk.vbo is None or len(chunk.vertices) == 0:
                 continue
-            sky_batches = [b for b in chunk.batches if b.surface_type == SURFACE_SKY]
-            if not sky_batches:
+            dx = chunk.cx - cam_x
+            dy = chunk.cy - cam_y
+            depth = dx * cam_fx + dy * cam_fy
+            if depth < -chunk.radius:
                 continue
-            sky_vao = self._get_chunk_sky_vao(chunk)
-            if sky_vao is None:
+            if abs(dx * cam_rx + dy * cam_ry) > depth * tan_half_fov + chunk.radius:
                 continue
-            for batch in sky_batches:
-                self.sky_renderer.render(
-                    sky_vao,
-                    self.tex_mgr,
-                    view=view,
-                    proj=proj,
-                    camera_yaw=iyaw,
-                    fov_x=fov_x_rad,
-                    pitch_offset=pitch_offset,
-                    palette_index=palette_index,
-                    gamma=gamma,
-                    vertices=batch.vertex_count,
-                    first=batch.vertex_offset,
-                )
+            visible_chunks.append(chunk)
+
+        # Reset shader state cache and bind lookup tables once per frame
+        self.world_shader.reset_state_cache()
+        self.tex_mgr.bind_lookup_tables(palette_unit=2, colormap_unit=3, fogmap_unit=4)
+
+        # 3. Draw sky polygons (SURFACE_SKY = 2.0) writing depth so sky ceilings/caps occlude
+        has_sky_visible = any(chunk.sky_batches for chunk in visible_chunks)
+        if has_sky_visible:
+            if self.sky_renderer.prepare_frame(
+                self.tex_mgr,
+                view=view,
+                proj=proj,
+                camera_yaw=iyaw,
+                fov_x=fov_x_rad,
+                pitch_offset=pitch_offset,
+                palette_index=palette_index,
+                gamma=gamma,
+            ):
+                for chunk in visible_chunks:
+                    if not chunk.sky_batches:
+                        continue
+                    sky_vao = self._get_chunk_sky_vao(chunk)
+                    if sky_vao is None:
+                        continue
+                    for batch in chunk.sky_batches:
+                        sky_vao.render(
+                            mode=moderngl.TRIANGLES,
+                            vertices=batch.vertex_count,
+                            first=batch.vertex_offset,
+                        )
 
         # 4. Draw opaque walls (SURFACE_WALL = 0.0) and flats (SURFACE_FLAT = 1.0)
         self.world_shader.set_camera(view, proj)
         self.world_shader.set_model(None)
         self.world_shader.set_light_override(-1.0)
-        for chunk in self.chunks.chunks:
-            if chunk.vbo is None or len(chunk.vertices) == 0:
-                continue
-            opaque_batches = [
-                b for b in chunk.batches if b.surface_type in (SURFACE_WALL, SURFACE_FLAT)
-            ]
-            if not opaque_batches:
+        has_lightning = bool(self.sky_renderer.lightning.light_flash > 0)
+        last_sec_extra = -999999
+        last_bound_tex = None
+        last_tex_w = -1
+        last_tex_h = -1
+        u_tex_size = self.world_shader._u_tex_size
+
+        for chunk in visible_chunks:
+            if not chunk.opaque_batches:
                 continue
             world_vao = self._get_chunk_world_vao(chunk)
             if world_vao is None:
                 continue
             sector = self.level.sectors[chunk.sector_index]
-            sec_extra = extralight + self._sector_lightning_extralight(sector)
-            self.world_shader.set_lighting(
-                palette_index=palette_index,
-                extralight=sec_extra,
-                fixed_colormap=fixed_colormap,
-                use_fogmap=self.use_fogmap,
-                gamma=gamma,
-                alpha=1.0,
+            sec_extra = extralight + (
+                self._sector_lightning_extralight(sector) if has_lightning else 0
             )
-            for batch in opaque_batches:
-                gpu_tex = self._resolve_batch_texture(batch)
-                self.world_shader.bind_surface_texture(self.tex_mgr, gpu_tex)
+            if sec_extra != last_sec_extra:
+                self.world_shader.set_lighting(
+                    palette_index=palette_index,
+                    extralight=sec_extra,
+                    fixed_colormap=fixed_colormap,
+                    use_fogmap=self.use_fogmap,
+                    gamma=gamma,
+                    alpha=1.0,
+                )
+                last_sec_extra = sec_extra
+            for batch in chunk.opaque_batches:
+                gpu_tex = (
+                    batch.gpu_tex
+                    if batch.gpu_tex is not None
+                    else self._resolve_batch_texture(batch)
+                )
+                if gpu_tex is not last_bound_tex:
+                    gpu_tex.bind(index_unit=0, mask_unit=1)
+                    w = gpu_tex.width
+                    h = gpu_tex.height
+                    if (w != last_tex_w or h != last_tex_h) and u_tex_size is not None:
+                        u_tex_size.value = (float(w), float(h))
+                        last_tex_w = w
+                        last_tex_h = h
+                    last_bound_tex = gpu_tex
                 world_vao.render(
                     mode=moderngl.TRIANGLES,
                     vertices=batch.vertex_count,
@@ -476,28 +565,41 @@ void main() {
                 )
 
         # 5. Draw masked mid-walls (SURFACE_MASKED_WALL = 3.0)
-        for chunk in self.chunks.chunks:
-            if chunk.vbo is None or len(chunk.vertices) == 0:
-                continue
-            masked_batches = [b for b in chunk.batches if b.surface_type == SURFACE_MASKED_WALL]
-            if not masked_batches:
+        for chunk in visible_chunks:
+            if not chunk.masked_batches:
                 continue
             world_vao = self._get_chunk_world_vao(chunk)
             if world_vao is None:
                 continue
             sector = self.level.sectors[chunk.sector_index]
-            sec_extra = extralight + self._sector_lightning_extralight(sector)
-            self.world_shader.set_lighting(
-                palette_index=palette_index,
-                extralight=sec_extra,
-                fixed_colormap=fixed_colormap,
-                use_fogmap=self.use_fogmap,
-                gamma=gamma,
-                alpha=1.0,
+            sec_extra = extralight + (
+                self._sector_lightning_extralight(sector) if has_lightning else 0
             )
-            for batch in masked_batches:
-                gpu_tex = self._resolve_batch_texture(batch)
-                self.world_shader.bind_surface_texture(self.tex_mgr, gpu_tex)
+            if sec_extra != last_sec_extra:
+                self.world_shader.set_lighting(
+                    palette_index=palette_index,
+                    extralight=sec_extra,
+                    fixed_colormap=fixed_colormap,
+                    use_fogmap=self.use_fogmap,
+                    gamma=gamma,
+                    alpha=1.0,
+                )
+                last_sec_extra = sec_extra
+            for batch in chunk.masked_batches:
+                gpu_tex = (
+                    batch.gpu_tex
+                    if batch.gpu_tex is not None
+                    else self._resolve_batch_texture(batch)
+                )
+                if gpu_tex is not last_bound_tex:
+                    gpu_tex.bind(index_unit=0, mask_unit=1)
+                    w = gpu_tex.width
+                    h = gpu_tex.height
+                    if (w != last_tex_w or h != last_tex_h) and u_tex_size is not None:
+                        u_tex_size.value = (float(w), float(h))
+                        last_tex_w = w
+                        last_tex_h = h
+                    last_bound_tex = gpu_tex
                 world_vao.render(
                     mode=moderngl.TRIANGLES,
                     vertices=batch.vertex_count,
@@ -506,6 +608,7 @@ void main() {
 
         # 5.5 Draw dynamic polyobjects (opaque and masked walls)
         self.render_polyobjs(
+            camera=camera,
             alpha=alpha,
             extralight=extralight,
             palette_index=palette_index,
@@ -554,6 +657,8 @@ void main() {
 
     def render_polyobjs(
         self,
+        camera: Camera | None = None,
+        *,
         alpha: float = 1.0,
         extralight: int = 0,
         palette_index: int = 0,
@@ -571,17 +676,17 @@ void main() {
         if not poly_list:
             return
 
-        from pyhexen.core.fixed import FRACUNIT
+        if camera is not None:
+            cam_x, cam_y, _, iyaw, _ = camera.interpolated_state(alpha)
+            cam_fx = math.cos(iyaw)
+            cam_fy = math.sin(iyaw)
+            cam_rx = math.sin(iyaw)
+            cam_ry = -math.cos(iyaw)
+            tan_fov = math.tan(math.radians(self.fov_deg * 0.5)) * 1.35
 
         for po in poly_list:
             mesh = self.poly_meshes.get(po.tag)
             if mesh is None or mesh.vbo is None or mesh.vertex_count == 0:
-                continue
-            vao = mesh.vao
-            if vao is None:
-                vao = self.world_shader.create_vao(mesh.vbo)
-                mesh.vao = vao
-            if vao is None:
                 continue
 
             curr_x = (
@@ -590,6 +695,22 @@ void main() {
             curr_y = (
                 po.start_spot.y if hasattr(po, "start_spot") else getattr(po, "start_spot_y", 0)
             ) / float(FRACUNIT)
+
+            if camera is not None:
+                dx = curr_x - cam_x
+                dy = curr_y - cam_y
+                depth = dx * cam_fx + dy * cam_fy
+                if depth < -512.0:
+                    continue
+                if abs(dx * cam_rx + dy * cam_ry) > depth * tan_fov + 512.0:
+                    continue
+
+            vao = mesh.vao
+            if vao is None:
+                vao = self.world_shader.create_vao(mesh.vbo)
+                mesh.vao = vao
+            if vao is None:
+                continue
             prev_x = getattr(po, "prev_x", int(curr_x * FRACUNIT)) / float(FRACUNIT)
             prev_y = getattr(po, "prev_y", int(curr_y * FRACUNIT)) / float(FRACUNIT)
 
@@ -604,19 +725,40 @@ void main() {
             iangle_deg = interpolate_angle(prev_ang_deg, curr_ang_deg, alpha)
             iangle_rad = math.radians(iangle_deg)
 
-            m_2d = compute_poly_model_matrix(ix, iy, iangle_rad)
-            m_gl = poly_model_to_gl_matrix(m_2d)
-            self.world_shader.set_model(m_gl)
+            cos_a = math.cos(iangle_rad)
+            sin_a = math.sin(iangle_rad)
+            m_gl_bytes = _STRUCT_MAT4.pack(
+                cos_a,
+                0.0,
+                -sin_a,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                sin_a,
+                0.0,
+                cos_a,
+                0.0,
+                ix,
+                0.0,
+                -iy,
+                1.0,
+            )
+            self.world_shader.set_model(m_gl_bytes)
 
-            sub = self.level.point_in_subsector(
-                round(ix * float(FRACUNIT)),
-                round(iy * float(FRACUNIT)),
-            )
-            sector = (
-                sub.sector
-                if sub is not None
-                else (po.subsector.sector if po.subsector is not None else None)
-            )
+            if po.subsector is not None and curr_x == prev_x and curr_y == prev_y:
+                sector = po.subsector.sector
+            else:
+                sub = self.level.point_in_subsector(
+                    round(ix * float(FRACUNIT)),
+                    round(iy * float(FRACUNIT)),
+                )
+                sector = (
+                    sub.sector
+                    if sub is not None
+                    else (po.subsector.sector if po.subsector is not None else None)
+                )
             sec_light = float(sector.light_level) if sector is not None else 160.0
             sec_extra = extralight + (
                 self._sector_lightning_extralight(sector) if sector is not None else 0
@@ -633,7 +775,10 @@ void main() {
             )
 
             for batch in mesh.batches:
-                gpu_tex = self._resolve_batch_texture(batch)
+                gpu_tex = batch.gpu_tex
+                if gpu_tex is None:
+                    gpu_tex = self._resolve_batch_texture(batch)
+                    batch.gpu_tex = gpu_tex
                 self.world_shader.bind_surface_texture(self.tex_mgr, gpu_tex)
                 vao.render(
                     mode=moderngl.TRIANGLES,
@@ -693,3 +838,13 @@ void main() {
 def render_polyobjs(renderer_inst: WorldRenderer, *args: Any, **kwargs: Any) -> Any:
     """Helper module-level entry point for polyobject rendering."""
     return renderer_inst.render_polyobjs(*args, **kwargs)
+
+
+__all__ = [
+    "WorldRenderer",
+    "compute_poly_model_matrix",
+    "interpolate_angle",
+    "interpolate_coord",
+    "poly_model_to_gl_matrix",
+    "render_polyobjs",
+]

@@ -11,6 +11,7 @@ events to mark both the modified sector and its two-sided neighbours dirty.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +26,7 @@ from pyhexen.render.mesh_flats import (
     triangulate_sector,
 )
 from pyhexen.render.mesh_walls import build_sector_walls
+from pyhexen.render.textures import SURFACE_MASKED_WALL, SURFACE_WALL
 from pyhexen.wad.flats import FlatRegistry
 from pyhexen.wad.textures import TextureRegistry
 from pyhexen.wad.wadfile import normalize_lump_name
@@ -40,6 +42,8 @@ class DrawBatch:
     tex_name: str
     vertex_offset: int
     vertex_count: int
+    gpu_tex: Any = None
+    is_animated: bool = False
 
 
 @dataclass(slots=True)
@@ -53,6 +57,14 @@ class SectorChunk:
     used_flat_fallback: bool = False
     dirty: bool = False
     vbo: Any = None
+    cx: float = 0.0
+    cy: float = 0.0
+    radius: float = 0.0
+    sky_batches: tuple[DrawBatch, ...] = field(default_factory=tuple)
+    opaque_batches: tuple[DrawBatch, ...] = field(default_factory=tuple)
+    masked_batches: tuple[DrawBatch, ...] = field(default_factory=tuple)
+    world_vao: Any = None
+    sky_vao: Any = None
 
 
 class ChunkManager:
@@ -190,6 +202,25 @@ class ChunkManager:
                         vbo.release()
                     vbo = active_ctx.buffer(raw_bytes)
 
+        cx = 0.0
+        cy = 0.0
+        radius = 0.0
+        if len(vertices) > 0:
+            min_x = float(np.min(vertices[:, 0]))
+            max_x = float(np.max(vertices[:, 0]))
+            map_y = -vertices[:, 2]
+            min_y = float(np.min(map_y))
+            max_y = float(np.max(map_y))
+            cx = (min_x + max_x) * 0.5
+            cy = (min_y + max_y) * 0.5
+            hx = (max_x - min_x) * 0.5
+            hy = (max_y - min_y) * 0.5
+            radius = math.sqrt(hx * hx + hy * hy)
+
+        sky_batches = tuple(b for b in batches if b.surface_type == SURFACE_SKY)
+        opaque_batches = tuple(b for b in batches if b.surface_type in (SURFACE_WALL, SURFACE_FLAT))
+        masked_batches = tuple(b for b in batches if b.surface_type == SURFACE_MASKED_WALL)
+
         return SectorChunk(
             sector_index=sector_index,
             neighbor_sectors=self._neighbors[sector_index],
@@ -198,6 +229,12 @@ class ChunkManager:
             used_flat_fallback=used_fallback,
             dirty=False,
             vbo=vbo,
+            cx=cx,
+            cy=cy,
+            radius=radius,
+            sky_batches=sky_batches,
+            opaque_batches=opaque_batches,
+            masked_batches=masked_batches,
         )
 
     def rebuild_dirty(self, ctx: Any = None) -> list[int]:
@@ -205,7 +242,19 @@ class ChunkManager:
         rebuilt: list[int] = []
         for idx, chunk in enumerate(self.chunks):
             if chunk.dirty:
-                self.chunks[idx] = self._build_sector_chunk(idx, existing_vbo=chunk.vbo, ctx=ctx)
+                old_vbo = chunk.vbo
+                old_world_vao = chunk.world_vao
+                old_sky_vao = chunk.sky_vao
+                new_chunk = self._build_sector_chunk(idx, existing_vbo=chunk.vbo, ctx=ctx)
+                if new_chunk.vbo is old_vbo:
+                    new_chunk.world_vao = old_world_vao
+                    new_chunk.sky_vao = old_sky_vao
+                else:
+                    if old_world_vao is not None and hasattr(old_world_vao, "release"):
+                        old_world_vao.release()
+                    if old_sky_vao is not None and hasattr(old_sky_vao, "release"):
+                        old_sky_vao.release()
+                self.chunks[idx] = new_chunk
                 rebuilt.append(idx)
         return rebuilt
 

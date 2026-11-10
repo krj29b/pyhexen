@@ -23,6 +23,16 @@ from pyhexen.sim.attacks import (
     spawn_puff,
     spawn_ripper_blood,
 )
+from pyhexen.sim.demo import (
+    Demo,
+    DemoDeterminismError,
+    DemoError,
+    DemoHeader,
+    DemoPlayer,
+    DemoRecorder,
+    DemoVersionError,
+    play_demo_to_completion,
+)
 from pyhexen.sim.enemy import (
     DI_EAST,
     DI_NODIR,
@@ -92,6 +102,13 @@ __all__ = [
     "DI_SOUTHEAST",
     "DI_SOUTHWEST",
     "DI_WEST",
+    "Demo",
+    "DemoDeterminismError",
+    "DemoError",
+    "DemoHeader",
+    "DemoPlayer",
+    "DemoRecorder",
+    "DemoVersionError",
     "FLOATSPEED",
     "HubManager",
     "MAXRADIUS",
@@ -140,6 +157,7 @@ __all__ = [
     "new_chase_dir",
     "noise_alert",
     "p_init_creature_corpse_queue",
+    "play_demo_to_completion",
     "radius_attack",
     "recursive_sound",
     "seeker_missile",

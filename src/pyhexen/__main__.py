@@ -60,6 +60,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to save a screenshot before exiting",
     )
+    parser.add_argument(
+        "--record",
+        type=str,
+        default=None,
+        help="Record a demo to the specified path",
+    )
+    parser.add_argument(
+        "--playdemo",
+        type=str,
+        default=None,
+        help="Play back a demo from the specified path",
+    )
+    parser.add_argument(
+        "--timedemo",
+        type=str,
+        default=None,
+        help="Play back a demo as fast as possible to benchmark and verify determinism",
+    )
     return parser
 
 
@@ -69,7 +87,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     iwad_path = resolve_iwad(args.iwad)
-    if not args.warp and not args.fly and not args.headless_frames:
+    if (
+        not args.warp
+        and not args.fly
+        and not args.headless_frames
+        and not args.record
+        and not args.playdemo
+        and not args.timedemo
+    ):
         print(f"pyhexen {__version__}")
         if iwad_path is None:
             print("Note: No HEXEN.WAD found. Use --iwad <path> or set PYHEXEN_IWAD.")
@@ -84,6 +109,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.file:
         for pwad in args.file:
             stack.add_wad(pwad)
+
+    from pyhexen.sim.demo import DemoPlayer, DemoRecorder, play_demo_to_completion
+    from pyhexen.sim.savegame import compute_wad_checksum
+
+    demo_player: DemoPlayer | None = None
+    if args.playdemo or args.timedemo:
+        demo_path = args.playdemo or args.timedemo
+        demo_player = DemoPlayer.from_file(demo_path)
 
     # Determine map name
     map_table = load_mapinfo(stack)
@@ -101,9 +134,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                 map_name = map_table[warp_upper].lump_name
             else:
                 map_name = warp_upper
+    elif demo_player is not None:
+        map_name = f"MAP{demo_player.demo.header.map_num:02d}"
 
     map_info = map_table.get(map_name)
     level = load_level(stack, map_name)
+
+    skill = (demo_player.demo.header.skill - 1) if demo_player is not None else (args.skill - 1)
+    sim = GameSim(level=level, skill=skill)
+    if demo_player is not None:
+        sim.rng.set_state(demo_player.demo.header.rng_state)
+    spawn_map_things(sim)
+
+    demo_recorder: DemoRecorder | None = None
+    if args.record:
+        demo_recorder = DemoRecorder(
+            sim,
+            file_path=args.record,
+            iwad_checksum=compute_wad_checksum(iwad_path),
+        )
+
+    if args.timedemo:
+        assert demo_player is not None
+        matched = play_demo_to_completion(sim, demo_player)
+        status = "PASSED" if matched else "FAILED"
+        print(f"Timedemo finished: {demo_player.total_tics} tics. Determinism: {status}")
+        return 0 if matched else 1
 
     is_headless = args.headless_frames > 0
     ctx = RenderContext(
@@ -115,9 +171,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     renderer = WorldRenderer(ctx, wad=stack)
     renderer.load_map(stack, level, map_info)
-
-    sim = GameSim(level=level, skill=args.skill - 1)
-    spawn_map_things(sim)
 
     camera = Camera()
     # Position camera at player 1 start if found
@@ -193,10 +246,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
         for _ in accumulator.advance(dt):
-            sim.tick()
+            if demo_player is not None:
+                if demo_player.is_finished:
+                    running = False
+                    break
+                cmds = demo_player.get_next_cmds()
+                sim.tick(cmds)
+            else:
+                sim.tick()
+                if demo_recorder is not None:
+                    demo_recorder.record_tic([p.cmd for p in sim.players if p.cmd])
 
         renderer.render_frame(camera, sim, alpha=accumulator.alpha)
         ctx.swap_buffers()
+
+    if demo_recorder is not None:
+        saved_demo = demo_recorder.finish()
+        print(f"Recorded demo: {saved_demo.header.total_tics} tics to {demo_recorder.file_path}")
+
+    if demo_player is not None:
+        matched = demo_player.check_determinism(sim)
+        status = "PASSED" if matched else "FAILED"
+        print(f"Demo playback finished. Determinism check: {status}")
 
     ctx.close()
     return 0

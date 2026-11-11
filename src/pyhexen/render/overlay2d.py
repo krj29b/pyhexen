@@ -322,6 +322,8 @@ class Overlay2D:
             self._vao.render(moderngl.TRIANGLES)
         finally:
             ctx.viewport = prev_viewport
+            # Leave the 3D default (depth test on) for whatever draws next.
+            ctx.enable(moderngl.DEPTH_TEST)
 
         return target_vp
 

@@ -442,7 +442,11 @@ void main() {
                     if not is_anim:
                         batch.gpu_tex = self._resolve_batch_texture(batch)
 
-        # 2. Clear color and depth buffers
+        # 2. Clear color and depth buffers. Depth testing is enabled every frame:
+        # the 2D overlay turns it off to draw the HUD, and without this the world
+        # was drawn with no depth test from the second frame on (far walls and
+        # sprites painted over near walls).
+        self.ctx.enable(moderngl.DEPTH_TEST)
         prev_viewport = self.ctx.viewport
         if self.authentic_lowres:
             self._ensure_lowres_fbo()

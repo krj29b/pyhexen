@@ -163,3 +163,39 @@ def test_rebuilt_sectors_keep_rendering() -> None:
         sim.events.emit(SectorChanged(1))
         assert np.array_equal(shot(), opened)
         ctx.close()
+
+
+def test_world_keeps_depth_testing_after_the_hud_overlay() -> None:
+    """Regression: the HUD overlay turned depth testing off for every later frame.
+
+    The game draws world → HUD every frame, so from the second frame on far walls
+    and sprites were painted over near walls. Headless single-frame renders never
+    showed it.
+    """
+    wb = _build_wad()
+    mb = MapBuilder("MAP04")
+    # A 64-unit step up into the far room: the far room's back wall is drawn after
+    # the near step wall and partly behind it, so only depth testing hides it.
+    mb.add_two_sector_rooms(floor2=64, ceil1=192, ceil2=192, width1=256, width2=512)
+    wb.add_map(mb)
+    stack = WadStack(wb.to_bytes())
+    with stack:
+        ctx = RenderContext(standalone=True, width=320, height=200)
+        renderer = WorldRenderer(ctx, wad=stack)
+        renderer.load_map(stack, load_level(stack, "MAP04"))
+        overlay = Overlay2D(wad=stack)
+        camera = Camera()
+        camera.x, camera.y, camera.z, camera.yaw = 32.0, 128.0, 41.0, 0.0
+
+        def frame() -> np.ndarray:
+            renderer.render_frame(camera)
+            img = np.frombuffer(ctx.ctx.fbo.read(components=3), dtype=np.uint8).copy()
+            overlay.clear()
+            assert renderer.tex_mgr is not None
+            overlay.render(ctx.ctx, renderer.tex_mgr)
+            return img
+
+        first = frame()
+        assert np.array_equal(frame(), first)
+        assert np.array_equal(frame(), first)
+        ctx.close()

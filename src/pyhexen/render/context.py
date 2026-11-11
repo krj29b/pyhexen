@@ -71,6 +71,9 @@ class RenderContext:
                 pygame.GL_CONTEXT_PROFILE_MASK,
                 pygame.GL_CONTEXT_PROFILE_CORE,
             )
+            # SDL's default depth buffer can be 16-bit, which is far too coarse for
+            # the 1..16384 depth range: distant walls bled through near ones.
+            pygame.display.gl_set_attribute(pygame.GL_DEPTH_SIZE, 24)
             flags = pygame.OPENGL | pygame.DOUBLEBUF
             if fullscreen:
                 flags |= pygame.FULLSCREEN

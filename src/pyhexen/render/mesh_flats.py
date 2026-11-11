@@ -88,6 +88,10 @@ def _trace_sector_loops(sector: Sector) -> tuple[list[list[Point2D]], bool]:
     """
     edges: list[tuple[Point2D, Point2D]] = []
     for line in sector.lines:
+        if line.is_polyobj:
+            # Polyobject lines are moved to their spawn spot by PO_Init; they do
+            # not bound the sector they were drawn in.
+            continue
         f_idx = line.front_sector.index if line.front_sector is not None else -1
         b_idx = line.back_sector.index if line.back_sector is not None else -1
         if f_idx == sector.index and b_idx == sector.index:
@@ -164,6 +168,49 @@ def _trace_sector_loops(sector: Sector) -> tuple[list[list[Point2D]], bool]:
     return rings, bool(rings)
 
 
+def _rings_well_formed(rings: list[list[Point2D]]) -> bool:
+    """Return True if every ring that would be triangulated as an outer boundary is clockwise.
+
+    Rings are traced with the sector's interior on the right, so a real outer
+    boundary is clockwise and a hole is counter-clockwise. A counter-clockwise ring
+    at even depth means the sector's outer boundary is not made of its own
+    linedefs (e.g. MAP01 sector 198, whose own lines only ring three pillars), and
+    triangulating it would fill the pillars instead of the floor.
+    """
+    for ring in rings:
+        sample = _ring_sample_point(ring)
+        depth = sum(1 for other in rings if other is not ring and _point_in_ring(sample, other))
+        if depth % 2 == 0 and _signed_ring_area(ring) > 0:
+            return False
+    return True
+
+
+def _ring_sample_point(ring: list[Point2D]) -> Point2D:
+    """Return a point just inside `ring`, for containment tests against other rings.
+
+    A ring vertex is a poor sample: rings of one sector often share vertices, and
+    a shared vertex gives an arbitrary inside/outside answer (MAP01 sector 63 had
+    a hole classified as an outer ring this way). Use the midpoint of the longest
+    edge, nudged a little toward the ring's interior.
+    """
+    n = len(ring)
+    best = max(
+        range(n),
+        key=lambda i: (
+            (ring[(i + 1) % n][0] - ring[i][0]) ** 2 + (ring[(i + 1) % n][1] - ring[i][1]) ** 2
+        ),
+    )
+    (x1, y1), (x2, y2) = ring[best], ring[(best + 1) % n]
+    length = math.hypot(x2 - x1, y2 - y1) or 1.0
+    # Interior is to the left of each edge for a counter-clockwise ring, right for clockwise.
+    sign = 1.0 if _signed_ring_area(ring) > 0 else -1.0
+    nudge = min(0.5, length * 0.01)
+    return (
+        (x1 + x2) * 0.5 - sign * (y2 - y1) / length * nudge,
+        (y1 + y2) * 0.5 + sign * (x2 - x1) / length * nudge,
+    )
+
+
 def _triangulate_rings(rings: list[list[Point2D]]) -> list[tuple[Point2D, Point2D, Point2D]]:
     """Classify outer vs hole rings by containment depth and triangulate via earcut."""
     if not rings:
@@ -176,7 +223,7 @@ def _triangulate_rings(rings: list[list[Point2D]]) -> list[tuple[Point2D, Point2
     depth: list[int] = [0] * n
 
     for i in range(n):
-        sample_pt = sorted_rings[i][0]
+        sample_pt = _ring_sample_point(sorted_rings[i])
         for j in range(i - 1, -1, -1):
             if _point_in_ring(sample_pt, sorted_rings[j]):
                 if parent[i] is None:
@@ -287,21 +334,24 @@ def _bsp_fallback_triangles(
     level: Level,
     sector: Sector,
 ) -> list[tuple[Point2D, Point2D, Point2D]]:
-    """Build convex polygons per subsector of `sector` by clipping with BSP and seg half-planes."""
-    # Gather bounding box of sector's vertices and subsector segs
-    xs: list[float] = []
-    ys: list[float] = []
-    for line in sector.lines:
-        xs.extend((line.v1.x / FRACUNIT, line.v2.x / FRACUNIT))
-        ys.extend((line.v1.y / FRACUNIT, line.v2.y / FRACUNIT))
+    """Build convex polygons per subsector of `sector` by clipping with BSP and seg half-planes.
 
+    This is how vanilla sees a sector: as the union of its subsectors. It handles
+    sectors whose boundary cannot be traced from linedefs (open or self-overlapping
+    sectors, and mapping tricks where a sector owns only one or two linedefs).
+    """
     sector_subsectors: list[Subsector] = [
         ss for ss in level.subsectors if ss.sector.index == sector.index
     ]
-    for ss in sector_subsectors:
-        for seg in level.segs[ss.first_line : ss.first_line + ss.num_lines]:
-            xs.extend((seg.v1.x / FRACUNIT, seg.v2.x / FRACUNIT))
-            ys.extend((seg.v1.y / FRACUNIT, seg.v2.y / FRACUNIT))
+
+    # Start every subsector from the whole map's bounding box: a subsector's
+    # region is bounded by BSP partition lines, which can reach far beyond the
+    # sector's own linedefs.
+    xs: list[float] = [v.x / FRACUNIT for v in level.vertexes]
+    ys: list[float] = [v.y / FRACUNIT for v in level.vertexes]
+    for line in sector.lines:
+        xs.extend((line.v1.x / FRACUNIT, line.v2.x / FRACUNIT))
+        ys.extend((line.v1.y / FRACUNIT, line.v2.y / FRACUNIT))
 
     if not xs:
         return []
@@ -340,23 +390,25 @@ def _bsp_fallback_triangles(
             ndx = node.dx / FRACUNIT
             ndy = node.dy / FRACUNIT
             if side == 0:
-                clipped = _clip_polygon_halfplane(poly, nx, ny, ndx, ndy)
+                poly = _clip_polygon_halfplane(poly, nx, ny, ndx, ndy)
             else:
-                clipped = _clip_polygon_halfplane(poly, nx, ny, -ndx, -ndy)
-            if len(clipped) >= 3:
-                poly = clipped
+                poly = _clip_polygon_halfplane(poly, nx, ny, -ndx, -ndy)
 
         for seg in level.segs[ss.first_line : ss.first_line + ss.num_lines]:
+            if seg.linedef is not None and seg.linedef.is_polyobj:
+                # Polyobject segs have been moved to the spawn spot (PO_Init) and
+                # no longer lie on this subsector's boundary.
+                continue
             sx1 = seg.v1.x / FRACUNIT
             sy1 = seg.v1.y / FRACUNIT
             sdx = (seg.v2.x - seg.v1.x) / FRACUNIT
             sdy = (seg.v2.y - seg.v1.y) / FRACUNIT
-            clipped = _clip_polygon_halfplane(poly, sx1, sy1, sdx, sdy)
-            if len(clipped) >= 3:
-                poly = clipped
+            poly = _clip_polygon_halfplane(poly, sx1, sy1, sdx, sdy)
 
-        if len(poly) < 3:
-            poly = list(base_box)
+        # A subsector that clips away to nothing has no area; never fall back to
+        # the whole box, which would cover unrelated parts of the map.
+        if len(poly) < 3 or abs(_signed_ring_area(poly)) < 1e-3:
+            continue
 
         p0 = poly[0]
         for i in range(1, len(poly) - 1):
@@ -429,16 +481,35 @@ def triangulate_sector(
     level: Level,
     sector_index: int,
 ) -> tuple[list[tuple[Point2D, Point2D, Point2D]], bool]:
-    """Return `(triangles, used_fallback)` for `sector_index`."""
+    """Return `(triangles, used_fallback)` for `sector_index`.
+
+    Every triangle is counter-clockwise in map coordinates, which is the winding
+    `_emit_flat_vertices` and back-face culling expect.
+    """
     sector = level.sectors[sector_index]
     rings, cleanly_closed = _trace_sector_loops(sector)
-    if cleanly_closed and rings:
+    if cleanly_closed and rings and _rings_well_formed(rings):
         triangles = _triangulate_rings(rings)
         if triangles:
-            return triangles, False
+            return _counter_clockwise(triangles), False
 
     triangles = _bsp_fallback_triangles(level, sector)
-    return triangles, True
+    return _counter_clockwise(triangles), True
+
+
+def _counter_clockwise(
+    triangles: list[tuple[Point2D, Point2D, Point2D]],
+) -> list[tuple[Point2D, Point2D, Point2D]]:
+    """Return `triangles` with any clockwise triangle flipped to counter-clockwise.
+
+    The BSP fallback clips a clockwise box, so its triangles came out clockwise
+    and were dropped by back-face culling: those floors and ceilings never drew.
+    """
+    out: list[tuple[Point2D, Point2D, Point2D]] = []
+    for p0, p1, p2 in triangles:
+        cross = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (p1[1] - p0[1])
+        out.append((p0, p2, p1) if cross < 0 else (p0, p1, p2))
+    return out
 
 
 def build_sector_flats(

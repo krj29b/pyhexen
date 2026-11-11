@@ -180,8 +180,10 @@ def test_flat_mesh_builder_hole_and_bsp_fallback() -> None:
         ld = mb.add_linedef(v1, v2, sd_front, sd_back, flags=ML_TWOSIDED)
         mb.add_seg(v1, v2, ang, ld, side=0)
     mb.add_subsector(4, first_inner_seg, bbox=(128, 64, 64, 128))
+    # Partition x=128 pointing north: its right (front) side is x > 128 and its
+    # left side holds the pillar (x 64..128), so the pillar subsector is child 1.
     mb.add_node(
-        128, 256, 0, -256, (256, 0, 0, 256), (128, 64, 64, 128), NF_SUBSECTOR | 0, NF_SUBSECTOR | 1
+        128, 0, 0, 256, (256, 0, 0, 256), (128, 64, 64, 128), NF_SUBSECTOR | 0, NF_SUBSECTOR | 1
     )
 
     level = _build_level(mb)
@@ -209,6 +211,15 @@ def test_flat_mesh_builder_hole_and_bsp_fallback() -> None:
     broken_mesh = build_sector_flats(level, sec_inner)
     assert broken_mesh.used_fallback is True
     assert len(broken_mesh.floor_vertices) >= 6
+    # The BSP polygon of the pillar subsector is exactly the 64x64 pillar.
+    fb_area = 0.0
+    bv = broken_mesh.floor_vertices
+    for i in range(0, len(bv), 3):
+        x0, y0 = float(bv[i, 0]), -float(bv[i, 2])
+        x1, y1 = float(bv[i + 1, 0]), -float(bv[i + 1, 2])
+        x2, y2 = float(bv[i + 2, 0]), -float(bv[i + 2, 2])
+        fb_area += 0.5 * abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0))
+    assert fb_area == pytest.approx(64.0 * 64.0)
 
 
 def test_chunk_manager_dirty_rebuild_and_performance() -> None:
@@ -268,3 +279,56 @@ def test_real_map01_all_sectors_build_geometry(iwad_path: Path) -> None:
         assert len(cm.chunks) == len(level.sectors)
         for chunk in cm.chunks:
             assert len(chunk.vertices) > 0
+
+
+def _flat_area_and_winding(level: Level, sector_index: int) -> tuple[float, set[int]]:
+    from pyhexen.render.mesh_flats import triangulate_sector
+
+    tris, _ = triangulate_sector(level, sector_index)
+    area = 0.0
+    signs: set[int] = set()
+    for (x0, y0), (x1, y1), (x2, y2) in tris:
+        cross = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+        area += abs(cross) / 2
+        signs.add(1 if cross > 0 else -1)
+    return area, signs
+
+
+def test_polyobject_lines_do_not_shape_the_sector_floor() -> None:
+    """Polyobject lines are moved to their spawn spot; they must not cut or add floor.
+
+    In Hexen maps the polyobject's sidedefs reference the surrounding sector. Before
+    the fix the moved box became an extra ring of that sector: a stray floor (and
+    sky) box elsewhere in MAP01 sector 63, and wrong BSP-fallback polygons.
+    """
+    from pyhexen.world.level import load_level
+
+    wb = WadBuilder("IWAD")
+    mb = MapBuilder("MAP01")
+    room = mb.add_room(0, 0, 512, 512)
+    mb.add_polyobject_box(
+        tag=1, anchor_x=-2000, anchor_y=-2000, spawn_x=256, spawn_y=256, dummy_sector_idx=room
+    )
+    mb.add_thing(x=64, y=64, type=1)
+    wb.add_map(mb)
+    level = load_level(WadStack(wb.to_bytes()), "MAP01")
+    assert any(line.is_polyobj for line in level.sectors[room].lines)
+
+    area, signs = _flat_area_and_winding(level, room)
+    assert area == pytest.approx(512.0 * 512.0)
+    assert signs == {1}  # counter-clockwise, as back-face culling expects
+
+
+def test_bsp_fallback_triangles_are_counter_clockwise() -> None:
+    """The BSP fallback clips a clockwise box; its triangles must still come out CCW."""
+    mb = MapBuilder("MAP01")
+    sec = mb.add_room(0, 0, 256, 256)
+    level = _build_level(mb)
+    level.sectors[sec].lines.pop()  # break the loop so the BSP fallback is used
+    from pyhexen.render.mesh_flats import triangulate_sector
+
+    _, used_fallback = triangulate_sector(level, sec)
+    assert used_fallback
+    area, signs = _flat_area_and_winding(level, sec)
+    assert area == pytest.approx(256.0 * 256.0)
+    assert signs == {1}

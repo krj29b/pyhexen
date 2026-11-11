@@ -370,3 +370,14 @@ def test_resolve_warp_accepts_numbers_and_lump_names() -> None:
     assert resolve_warp("MAP05", table) == 5
     with pytest.raises(SystemExit):
         resolve_warp("E1M1", table)
+
+
+def test_describe_view_reports_player_position() -> None:
+    from pyhexen.__main__ import describe_view
+
+    flow = _build_flow()
+    assert describe_view(None, None) == "no level"
+    _start_game(flow)
+    text = describe_view(flow.sim, flow.player)
+    assert text.startswith("map=MAP01 x=128.0 y=128.0 ")
+    assert "sector=" in text and "angle=" in text

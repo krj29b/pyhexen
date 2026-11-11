@@ -37,6 +37,7 @@ from pyhexen.world.level import load_level
 
 if TYPE_CHECKING:
     from pyhexen.sim.demo import DemoPlayer
+    from pyhexen.sim.player import Player
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,6 +127,22 @@ def window_to_virtual(
     vx = (px - x) * 320 // max(1, w)
     vy = (py - top) * 200 // max(1, h)
     return vx, vy
+
+
+def describe_view(sim: GameSim | None, player: Player | None) -> str:
+    """One-line description of where the player is, saved next to F12 screenshots."""
+    if sim is None or player is None or player.mo is None or sim.level is None:
+        return "no level"
+    mo = player.mo
+    sector = sim.level.point_in_subsector(mo.x, mo.y).sector
+    angle = (mo.angle & 0xFFFFFFFF) * 360.0 / 2**32
+    return (
+        f"map={sim.level.name} x={mo.x / 65536:.1f} y={mo.y / 65536:.1f} "
+        f"z={mo.z / 65536:.1f} viewz={player.viewz / 65536:.1f} angle={angle:.1f} "
+        f"lookdir={player.lookdir} sector={sector.index} "
+        f"floor={sector.floor_height / 65536:.0f} ceiling={sector.ceiling_height / 65536:.0f} "
+        f"tic={sim.level_time}"
+    )
 
 
 def _build_demo_sim(stack: WadStack, map_table: MapInfoTable, demo_player: DemoPlayer) -> GameSim:
@@ -315,7 +332,9 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
                     out_dir.mkdir(exist_ok=True)
                     shot_path = out_dir / f"screenshot_{int(pygame.time.get_ticks())}.png"
                     saved = renderer.save_screenshot(shot_path)
-                    print(f"Saved screenshot: {saved}")
+                    info = describe_view(flow.sim, flow.player)
+                    Path(saved).with_suffix(".txt").write_text(info + "\n", encoding="utf-8")
+                    print(f"Saved screenshot: {saved}\n{info}")
                 elif not args.fly:
                     input_handler.process_event(event)
             elif event.type == pygame.KEYUP:

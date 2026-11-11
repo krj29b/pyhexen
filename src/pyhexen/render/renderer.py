@@ -425,10 +425,12 @@ void main() {
             anim_walls = getattr(self.tex_mgr, "animated_wall_indices", set())
             anim_flats = getattr(self.tex_mgr, "animated_flat_indices", set())
             for sec_idx in rebuilt:
-                if sec_idx in self._chunk_world_vaos:
-                    self._chunk_world_vaos.pop(sec_idx)[1].release()
-                if sec_idx in self._chunk_sky_vaos:
-                    self._chunk_sky_vaos.pop(sec_idx)[1].release()
+                # ChunkManager.rebuild_dirty already kept the VAOs (same VBO) or
+                # released them (new VBO). Only drop the cache entries here:
+                # releasing them again freed VAOs the rebuilt chunk still used,
+                # which made rebuilt sectors (e.g. moving doors) vanish.
+                self._chunk_world_vaos.pop(sec_idx, None)
+                self._chunk_sky_vaos.pop(sec_idx, None)
                 chunk = self.chunks.chunks[sec_idx]
                 for batch in chunk.batches:
                     is_anim = False

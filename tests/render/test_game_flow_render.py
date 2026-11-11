@@ -13,6 +13,7 @@ import numpy as np
 from fixtures.wadbuilder import MapBuilder, PatchPlacement, TextureDef, WadBuilder
 from pyhexen.__main__ import main
 from pyhexen.app.game_flow import GameAction, GameFlow, GameState
+from pyhexen.core.events import SectorChanged
 from pyhexen.render.camera import Camera
 from pyhexen.render.context import RenderContext
 from pyhexen.render.overlay2d import Overlay2D
@@ -21,6 +22,7 @@ from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.transitions import teleport_new_map
 from pyhexen.wad.mapinfo import MapInfo, load_mapinfo
 from pyhexen.wad.wadfile import WadStack
+from pyhexen.world.level import load_level
 
 MAPINFO_TEXT = b"""
 map 1 "ONE"
@@ -116,4 +118,48 @@ def test_flow_renders_every_state_across_a_map_change() -> None:
         assert GameState.INTERMISSION in seen
         assert loaded == ["MAP01", "MAP02"]
         assert renderer.level is flow.sim.level
+        ctx.close()
+
+
+def test_rebuilt_sectors_keep_rendering() -> None:
+    """Regression: a sector rebuild must not leave its chunk on a released VAO.
+
+    Rebuilds only happen when the renderer gets the sim's event bus (T15.1). The
+    renderer used to release VAOs that `rebuild_dirty` had kept for the chunk, so
+    moving doors and their neighbours vanished (or crashed a headless render).
+    """
+    wb = _build_wad()
+    mb = MapBuilder("MAP03")
+    # Sector 1 starts as a closed door (ceiling == floor), so opening it resizes the VBO.
+    mb.add_two_sector_rooms(floor2=0, ceil2=0)
+    mb.add_thing(x=64, y=128, type=1)
+    wb.add_map(mb)
+    stack = WadStack(wb.to_bytes())
+    with stack:
+        ctx = RenderContext(standalone=True, width=320, height=200)
+        renderer = WorldRenderer(ctx, wad=stack)
+        level = load_level(stack, "MAP03")
+        sim = GameSim(level=level)
+        renderer.load_map(stack, level, event_bus=sim.events)
+        camera = Camera()
+        camera.x, camera.y, camera.z, camera.yaw = 64.0, 128.0, 41.0, 0.0
+
+        def shot() -> np.ndarray:
+            renderer.render_frame(camera, sim)
+            return np.frombuffer(ctx.ctx.fbo.read(components=3), dtype=np.uint8).copy()
+
+        before = shot()
+        # Same geometry: the VBO keeps its size and the VAOs are reused.
+        for i in range(len(level.sectors)):
+            sim.events.emit(SectorChanged(i))
+        assert np.array_equal(shot(), before)
+        assert np.array_equal(shot(), before)
+
+        # Open the door: new geometry, new VBO size.
+        level.sectors[1].ceiling_height = 128 << 16
+        sim.events.emit(SectorChanged(1))
+        opened = shot()
+        assert not np.array_equal(opened, before)
+        sim.events.emit(SectorChanged(1))
+        assert np.array_equal(shot(), opened)
         ctx.close()

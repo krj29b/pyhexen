@@ -169,8 +169,8 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         for pwad in args.file:
             stack.add_wad(pwad)
 
+    from pyhexen.app.savegame import SaveGameManager, compute_wad_checksum
     from pyhexen.sim.demo import DemoPlayer, DemoRecorder, play_demo_to_completion
-    from pyhexen.sim.savegame import SaveGameManager, compute_wad_checksum
 
     map_table = load_mapinfo(stack)
     pclass_idx = {"fighter": 0, "cleric": 1, "mage": 2}.get(args.player_class.lower(), 0)

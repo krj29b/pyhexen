@@ -14,7 +14,7 @@ import pytest
 
 from pyhexen.app.game_flow import GameFlow, GameState
 from pyhexen.app.game_ui import GameUI
-from pyhexen.sim.savegame import SaveGameManager
+from pyhexen.app.savegame import SaveGameManager
 from pyhexen.ui.menu import MenuManager
 from pyhexen.wad.mapinfo import load_mapinfo
 from pyhexen.wad.wadfile import WadStack

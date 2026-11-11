@@ -80,15 +80,6 @@ from pyhexen.sim.enemy import (
     try_walk,
 )
 from pyhexen.sim.hub import HubManager
-from pyhexen.sim.savegame import (
-    SaveChecksumError,
-    SaveError,
-    SaveGameManager,
-    SaveHeader,
-    SaveSlotInfo,
-    SaveVersionError,
-    compute_wad_checksum,
-)
 from pyhexen.sim.sight import check_sight
 
 __all__ = [
@@ -113,14 +104,7 @@ __all__ = [
     "HubManager",
     "MAXRADIUS",
     "MELEERANGE",
-    "SaveChecksumError",
-    "SaveError",
-    "SaveGameManager",
-    "SaveHeader",
-    "SaveSlotInfo",
-    "SaveVersionError",
     "TOPSLOPE",
-    "compute_wad_checksum",
     "a_chase",
     "a_dequeuecorpse",
     "a_explode",

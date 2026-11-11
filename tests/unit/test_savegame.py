@@ -13,12 +13,7 @@ from pathlib import Path
 import pytest
 from tests.fixtures.wadbuilder import MapBuilder, WadBuilder
 
-from pyhexen.core.fixed import FRACUNIT
-from pyhexen.sim.artifacts import ArtiType, give_artifact
-from pyhexen.sim.game_sim import GameSim
-from pyhexen.sim.hub import HubManager
-from pyhexen.sim.player import spawn_player
-from pyhexen.sim.savegame import (
+from pyhexen.app.savegame import (
     NUM_SAVE_SLOTS,
     SaveChecksumError,
     SaveError,
@@ -26,8 +21,12 @@ from pyhexen.sim.savegame import (
     SaveVersionError,
     compute_wad_checksum,
 )
+from pyhexen.core.fixed import FRACUNIT
+from pyhexen.sim.artifacts import ArtiType, give_artifact
+from pyhexen.sim.game_sim import GameSim
+from pyhexen.sim.hub import HubManager
+from pyhexen.sim.player import spawn_player
 from pyhexen.sim.specials.doors import DoorType, VerticalDoor
-from pyhexen.ui.menu import MenuManager
 from pyhexen.wad.wadfile import WadStack
 from pyhexen.world.level import Level, load_level
 
@@ -183,59 +182,20 @@ def test_save_version_and_magic_validation(tmp_path: Path) -> None:
         save_mgr.load_game(slot=0, sim=fresh_sim, validate_checksum=False)
 
 
-def test_menu_ui_synchronization(tmp_path: Path) -> None:
-    """MenuManager save/load slots and callbacks sync properly with SaveGameManager."""
+def test_list_slots_and_delete(tmp_path: Path) -> None:
+    """Slot listing reads descriptions from disk; the menu side is tested in test_game_ui.py."""
     stack, save_mgr = _create_synthetic_test_env(tmp_path)
     level = load_level(stack, "MAP01")
     current_sim = GameSim(level=level)
     current_hub = HubManager(current_cluster=1)
     spawn_player(current_sim, player_num=0)
 
-    menu = MenuManager()
-
-    # Pre-save slot 3
     save_mgr.save_game(slot=3, description="Slot Three Save", sim=current_sim, hub=current_hub)
+    slots = save_mgr.list_slots()
+    assert len(slots) == 6
+    assert slots[3].occupied and slots[3].description == "Slot Three Save"
+    assert not slots[0].occupied
 
-    # Sync menu
-    save_mgr.sync_menu(
-        menu=menu,
-        sim_getter=lambda: current_sim,
-        hub_getter=lambda: current_hub,
-        load_level_cb=lambda num: level,
-    )
-
-    # Check menu slots synced
-    assert menu.slot_texts[3] == "Slot Three Save"
-    assert menu.slot_status[3] is True
-    assert menu.slot_status[0] is False
-
-    # Simulate saving via menu callback on slot 0
-    assert menu.on_save_game is not None
-    menu.on_save_game(0, "Menu Saved Slot 0")
-
-    assert menu.slot_texts[0] == "Menu Saved Slot 0"
-    assert menu.slot_status[0] is True
-    assert save_mgr.get_slot_path(0).is_file()
-
-    # Simulate loading via menu callback on slot 0
-    loaded_flag = False
-
-    def on_loaded(sim: GameSim, hub: HubManager) -> None:
-        nonlocal loaded_flag
-        loaded_flag = True
-
-    save_mgr.sync_menu(
-        menu=menu,
-        sim_getter=lambda: current_sim,
-        hub_getter=lambda: current_hub,
-        on_loaded_cb=on_loaded,
-        load_level_cb=lambda num: level,
-    )
-
-    assert menu.on_load_game is not None
-    menu.on_load_game(0)
-    assert loaded_flag
-
-    # Delete slot
-    assert save_mgr.delete_slot(0)
-    assert not save_mgr.get_slot_path(0).exists()
+    assert save_mgr.delete_slot(3)
+    assert not save_mgr.get_slot_path(3).exists()
+    assert not save_mgr.delete_slot(3)

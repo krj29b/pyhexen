@@ -4,8 +4,9 @@
 
 """Save/load file management, serialization slots, and IWAD checksum validation (T13.4).
 
-Port of SV_SaveGame, SV_LoadGame, SV_InitBaseSlot, CopySaveSlot in sv_save.c,
-and save menu interaction in mn_menu.c.
+Port of SV_SaveGame, SV_LoadGame, SV_InitBaseSlot, CopySaveSlot in sv_save.c.
+Lives in `app/` (T15.5): it does file I/O and is driven by `GameFlow`; the menu
+side is wired in `app/game_ui.py`.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from pyhexen.sim.hub import HubManager
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
-    from pyhexen.ui.menu import MenuManager
     from pyhexen.wad.wadfile import WadStack
     from pyhexen.world.level import Level
 
@@ -318,34 +318,3 @@ class SaveGameManager:
             path.unlink()
             return True
         return False
-
-    def sync_menu(
-        self,
-        menu: MenuManager,
-        sim_getter: Callable[[], GameSim],
-        hub_getter: Callable[[], HubManager],
-        on_loaded_cb: Callable[[GameSim, HubManager], None] | None = None,
-        load_level_cb: Callable[[int], Level] | None = None,
-    ) -> None:
-        """Synchronize MenuManager slot names and wire save/load callbacks."""
-        slot_infos = self.list_slots()
-        for info in slot_infos:
-            menu.slot_texts[info.slot] = info.description
-            menu.slot_status[info.slot] = info.occupied
-
-        def _on_save(slot: int, description: str) -> None:
-            sim = sim_getter()
-            hub = hub_getter()
-            self.save_game(slot, description, sim, hub)
-            menu.slot_texts[slot] = description
-            menu.slot_status[slot] = True
-
-        def _on_load(slot: int) -> None:
-            sim = sim_getter()
-            hub = hub_getter()
-            restored_sim, restored_hub = self.load_game(slot, sim, hub, load_level_cb=load_level_cb)
-            if on_loaded_cb is not None:
-                on_loaded_cb(restored_sim, restored_hub)
-
-        menu.on_save_game = _on_save
-        menu.on_load_game = _on_load

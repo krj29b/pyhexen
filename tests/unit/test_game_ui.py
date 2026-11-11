@@ -14,9 +14,9 @@ from tests.fixtures.wadbuilder import MapBuilder, WadBuilder
 
 from pyhexen.app.game_flow import TXT_GAMESAVED, GameFlow, GameState
 from pyhexen.app.game_ui import GameUI
+from pyhexen.app.savegame import SaveGameManager
 from pyhexen.render.overlay2d import Overlay2D
 from pyhexen.sim.message import set_message
-from pyhexen.sim.savegame import SaveGameManager
 from pyhexen.sim.transitions import exit_normal
 from pyhexen.ui.fonts import FontSet
 from pyhexen.ui.menu import MenuManager, MenuType

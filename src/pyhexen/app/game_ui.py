@@ -27,10 +27,10 @@ from pyhexen.ui.messages import draw_message
 
 if TYPE_CHECKING:
     from pyhexen.app.game_flow import GameFlow
+    from pyhexen.app.savegame import SaveGameManager
     from pyhexen.render.overlay2d import Overlay2D
     from pyhexen.sim.game_sim import GameSim
     from pyhexen.sim.player import Player
-    from pyhexen.sim.savegame import SaveGameManager
     from pyhexen.ui.menu import MenuManager
     from pyhexen.ui.statusbar import StatusBar
     from pyhexen.wad.mapinfo import MapInfo

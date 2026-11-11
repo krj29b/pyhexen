@@ -20,18 +20,18 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
+from pyhexen.app.savegame import SaveError
 from pyhexen.core.events import MapExit
 from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.hub import HubManager, remove_all_thinkers
 from pyhexen.sim.message import set_message
 from pyhexen.sim.player import PlayerState
-from pyhexen.sim.savegame import SaveError
 from pyhexen.ui.intermission import Finale, Intermission, TitleLoop
 from pyhexen.world.level import load_level
 
 if TYPE_CHECKING:
+    from pyhexen.app.savegame import SaveGameManager
     from pyhexen.sim.player import Player
-    from pyhexen.sim.savegame import SaveGameManager
     from pyhexen.wad.mapinfo import MapInfo, MapInfoTable
     from pyhexen.wad.wadfile import WadFile, WadStack
     from pyhexen.world.level import Level

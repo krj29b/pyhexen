@@ -18,7 +18,6 @@ from pyhexen.core.angles import (
     fine_cosine,
     fine_sine,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import (
     FRACUNIT,
     fixed_mul,
@@ -28,6 +27,7 @@ from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum
 from pyhexen.sim.map import teleport_move
 from pyhexen.sim.mobj import remove_mobj, spawn_mobj
 from pyhexen.sim.player import PW_FLIGHT, PW_SPEED
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.transitions import teleport_end_game, teleport_new_map
 
 if TYPE_CHECKING:
@@ -79,23 +79,14 @@ def p_teleport(
 
     if use_fog:
         fog_delta = 0 if bool(thing.flags & MobjFlag.MF_MISSILE) else TELEFOGHEIGHT
-        spawn_mobj(sim, oldx, oldy, oldz + fog_delta, MobjType.MT_TFOG)
-        sim.events.emit(
-            SoundEvent(sound_id=int(SfxEnum.SFX_TELEPORT), x=oldx, y=oldy, z=oldz + fog_delta)
-        )
+        fog1 = spawn_mobj(sim, oldx, oldy, oldz + fog_delta, MobjType.MT_TFOG)
+        start_sound(sim, fog1, int(SfxEnum.SFX_TELEPORT))
 
         an = ((angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT) & FINEMASK
         dest_fog_x = x + 20 * fine_cosine(an)
         dest_fog_y = y + 20 * fine_sine(an)
-        _fog2 = spawn_mobj(sim, dest_fog_x, dest_fog_y, thing.z + fog_delta, MobjType.MT_TFOG)
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(SfxEnum.SFX_TELEPORT),
-                x=dest_fog_x,
-                y=dest_fog_y,
-                z=thing.z + fog_delta,
-            )
-        )
+        fog2 = spawn_mobj(sim, dest_fog_x, dest_fog_y, thing.z + fog_delta, MobjType.MT_TFOG)
+        start_sound(sim, fog2, int(SfxEnum.SFX_TELEPORT))
 
         if thing.player is not None and not thing.player.powers[PW_SPEED]:
             thing.reactiontime = 18

@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.events import SoundEvent
 from pyhexen.sim.info_data import SfxEnum
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.thinker import Thinker
 
 if TYPE_CHECKING:
@@ -108,15 +108,8 @@ class ButtonThinker(Thinker):
                         side.mid_texture = self.btexture
                     elif self.where == SwitchWhere.SWTCH_BOTTOM:
                         side.bottom_texture = self.btexture
-                sec = self.line.front_sector
-                if sec is not None:
-                    sim.events.emit(
-                        SoundEvent(
-                            sound_id=self.sound_id,
-                            x=sec.sound_org_x,
-                            y=sec.sound_org_y,
-                        )
-                    )
+                # No sound here: the button-revert sound is commented out in
+                # vanilla P_UpdateSpecials (p_spec.c).
                 sim.thinkers.remove(self)
 
     def state_tuple(self) -> tuple[Any, ...]:
@@ -142,16 +135,14 @@ def p_change_switch_texture(sim: GameSim, line: Line, repeat: bool) -> bool:
     if side is None:
         return False
 
-    sec = line.front_sector
-    sx = sec.sound_org_x if sec is not None else 0
-    sy = sec.sound_org_y if sec is not None else 0
+    sec = line.front_sector  # sound origin: the front sector's soundorg
 
     top_upper = side.top_texture.upper()
     if top_upper in _SWITCH_LOOKUP:
         new_tex, sound_id = _SWITCH_LOOKUP[top_upper]
         old_tex = side.top_texture
         side.top_texture = new_tex
-        sim.events.emit(SoundEvent(sound_id=sound_id, x=sx, y=sy))
+        start_sound(sim, sec, sound_id)
         if repeat:
             sim.thinkers.add(ButtonThinker(line, SwitchWhere.SWTCH_TOP, old_tex, BUTTONTIME))
         return True
@@ -161,7 +152,7 @@ def p_change_switch_texture(sim: GameSim, line: Line, repeat: bool) -> bool:
         new_tex, sound_id = _SWITCH_LOOKUP[mid_upper]
         old_tex = side.mid_texture
         side.mid_texture = new_tex
-        sim.events.emit(SoundEvent(sound_id=sound_id, x=sx, y=sy))
+        start_sound(sim, sec, sound_id)
         if repeat:
             sim.thinkers.add(ButtonThinker(line, SwitchWhere.SWTCH_MIDDLE, old_tex, BUTTONTIME))
         return True
@@ -171,7 +162,7 @@ def p_change_switch_texture(sim: GameSim, line: Line, repeat: bool) -> bool:
         new_tex, sound_id = _SWITCH_LOOKUP[bot_upper]
         old_tex = side.bottom_texture
         side.bottom_texture = new_tex
-        sim.events.emit(SoundEvent(sound_id=sound_id, x=sx, y=sy))
+        start_sound(sim, sec, sound_id)
         if repeat:
             sim.thinkers.add(ButtonThinker(line, SwitchWhere.SWTCH_BOTTOM, old_tex, BUTTONTIME))
         return True

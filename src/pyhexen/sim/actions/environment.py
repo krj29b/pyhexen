@@ -22,7 +22,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, abs32, c_div, fixed_mul
 from pyhexen.sim.acs.vm import TRANSLATE_THING_TYPE
 from pyhexen.sim.actions import action
@@ -44,6 +43,7 @@ from pyhexen.sim.mobj import (
 )
 from pyhexen.sim.movement import thrust_mobj
 from pyhexen.sim.sight import check_sight
+from pyhexen.sim.sound import start_sound
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -56,15 +56,7 @@ def _is_sim(obj: object) -> bool:
 def _start_sound(sim: GameSim, mo: Mobj, sfx_id: int | SfxEnum) -> None:
     sid = int(sfx_id)
     if sid != int(SfxEnum.SFX_NONE) and hasattr(sim, "events"):
-        sim.events.emit(
-            SoundEvent(
-                sound_id=sid,
-                origin_id=id(mo) if mo is not None else 0,
-                x=mo.x if mo is not None else 0,
-                y=mo.y if mo is not None else 0,
-                z=mo.z if mo is not None else 0,
-            )
-        )
+        start_sound(sim, mo, sid)
 
 
 # =============================================================================

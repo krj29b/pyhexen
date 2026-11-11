@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.fixed import FRACUNIT
 from pyhexen.sim.mobj import FLOAT_BOB_OFFSETS
+from pyhexen.sim.sound import start_platform_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import (
     find_sectors_from_tag,
     notify_sector_changed,
@@ -135,6 +136,7 @@ class FloorMove(Thinker):
             direction=self.direction,
         )
         if res == MoveResult.RES_PASTDEST:
+            stop_sequence(sim, self.sector)
             self.removed = True
             if self.sector is not None:
                 self.sector.special_data = None
@@ -222,6 +224,8 @@ def ev_do_floor(
         mover = FloorMove(sec, speed, dest, direction, crush)
         sec.special_data = mover
         sim.thinkers.add(mover)
+    # Vanilla EV_DoFloor starts one sequence after the loop, on the last sector.
+    start_platform_sequence(sim, mover.sector)
     return True
 
 

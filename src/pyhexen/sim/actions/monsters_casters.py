@@ -28,7 +28,6 @@ from pyhexen.core.angles import (
     fine_cosine,
     fine_sine,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, c_mod, fixed_mul
 from pyhexen.sim.actions import action
 from pyhexen.sim.actions.monsters_common import FLOAT_BOB_OFFSETS, hitdice
@@ -44,6 +43,7 @@ from pyhexen.sim.info_data import (
 from pyhexen.sim.inter import damage_mobj
 from pyhexen.sim.map import try_move
 from pyhexen.sim.mobj import Mobj, set_mobj_state, spawn_mobj
+from pyhexen.sim.sound import start_sound
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -70,15 +70,7 @@ def _emit_sound(sim: GameSim, actor: Mobj, sound_id: int | SfxEnum) -> None:
     """Emit a SoundEvent from actor if sound_id is non-zero."""
     sid = int(sound_id)
     if sid:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=sid,
-                origin_id=actor.tid,
-                x=actor.x,
-                y=actor.y,
-                z=actor.z,
-            )
-        )
+        start_sound(sim, actor, sid)
 
 
 # =============================================================================

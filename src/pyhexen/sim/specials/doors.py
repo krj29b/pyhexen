@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import FRACUNIT
+from pyhexen.sim.sound import start_door_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import (
     find_lowest_ceiling_surrounding,
     find_sectors_from_tag,
@@ -86,6 +87,7 @@ class VerticalDoor(Thinker):
                 direction=1,
             )
             if res == MoveResult.RES_PASTDEST:
+                stop_sequence(sim, self.sector)
                 if self.type == DoorType.DREV_OPEN:
                     self.removed = True
                     if self.sector is not None:
@@ -106,6 +108,7 @@ class VerticalDoor(Thinker):
                 direction=-1,
             )
             if res == MoveResult.RES_PASTDEST:
+                stop_sequence(sim, self.sector)
                 self.removed = True
                 if self.sector is not None:
                     self.sector.special_data = None
@@ -117,7 +120,8 @@ class VerticalDoor(Thinker):
         elif self.direction == 0:  # WAITING
             self.topcountdown -= 1
             if self.topcountdown <= 0:
-                self.direction = -1
+                self.direction = -1  # time to go back down
+                start_door_sequence(sim, self.sector)
 
     def state_tuple(self) -> tuple[Any, ...]:
         return (
@@ -158,6 +162,7 @@ def ev_do_door(
         door = VerticalDoor(sec, type_, speed, topwait=topwait)
         sec.special_data = door
         sim.thinkers.add(door)
+        start_door_sequence(sim, sec)
         return True
 
     sectors = find_sectors_from_tag(sim.level, tag)
@@ -167,6 +172,7 @@ def ev_do_door(
         door = VerticalDoor(sec, type_, speed, topwait=topwait)
         sec.special_data = door
         sim.thinkers.add(door)
+        start_door_sequence(sim, sec)
     return True
 
 

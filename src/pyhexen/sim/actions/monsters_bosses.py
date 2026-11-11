@@ -23,7 +23,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import (
     FRACBITS,
     FRACUNIT,
@@ -66,6 +65,7 @@ from pyhexen.sim.mobj import (
     spawn_mobj,
 )
 from pyhexen.sim.sight import check_sight
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
 
 if TYPE_CHECKING:
@@ -147,19 +147,7 @@ def _emit_sound(
     sid = int(sound_id)
     if sid <= 0:
         return
-    origin_id = None if (full_volume or actor is None) else actor.tid
-    x = actor.x if actor is not None else 0
-    y = actor.y if actor is not None else 0
-    z = actor.z if actor is not None else 0
-    sim.events.emit(
-        SoundEvent(
-            sound_id=sid,
-            origin_id=origin_id,
-            x=x,
-            y=y,
-            z=z,
-        )
-    )
+    start_sound(sim, None if (full_volume or actor is None) else actor, sid)
 
 
 def p_test_mobj_location(sim: GameSim, mobj: Mobj) -> bool:

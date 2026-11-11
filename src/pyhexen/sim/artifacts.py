@@ -24,7 +24,7 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import PrintMessage, SoundEvent
+from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, abs32, c_div, fixed_mul, to_uint32
 from pyhexen.sim.actions import action
 from pyhexen.sim.attacks import (
@@ -78,6 +78,7 @@ from pyhexen.sim.psprites import (
     p_post_morph_weapon,
     p_set_psprite_nf,
 )
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
 
 if TYPE_CHECKING:
@@ -250,16 +251,7 @@ def _start_sound(
     sid = int(sound_id)
     if sid <= 0 or sid == int(SfxEnum.SFX_NONE):
         return
-    sim.events.emit(
-        SoundEvent(
-            sound_id=sid,
-            origin_id=id(actor) if actor is not None else 0,
-            x=actor.x if actor is not None else 0,
-            y=actor.y if actor is not None else 0,
-            z=actor.z if actor is not None else 0,
-            volume=127 if full_volume else None,
-        )
-    )
+    start_sound(sim, None if full_volume else actor, sid)
 
 
 def _set_player_message(

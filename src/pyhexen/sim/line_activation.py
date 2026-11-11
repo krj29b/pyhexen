@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyhexen.core.angles import ANGLETOFINESHIFT, fine_cosine, fine_sine
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT
 from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum
 from pyhexen.sim.maputl import (
@@ -22,6 +21,7 @@ from pyhexen.sim.maputl import (
     path_traverse,
     point_on_line_side,
 )
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
 from pyhexen.sim.specials.switches import p_change_switch_texture
 from pyhexen.world.level import (
@@ -142,28 +142,12 @@ def p_use_lines(sim: GameSim, player: Player) -> bool:
         if not li.special:
             opening = line_opening(li)
             if opening.openrange <= 0:
-                sim.events.emit(
-                    SoundEvent(
-                        sound_id=_failed_use_sfx(player.player_class),
-                        origin_id=id(mo),
-                        x=mo.x,
-                        y=mo.y,
-                        z=mo.z,
-                    )
-                )
+                start_sound(sim, mo, _failed_use_sfx(player.player_class))
                 return False  # Can't use through a closed wall
 
             pheight = mo.z + (mo.height // 2)
             if opening.opentop < pheight or opening.openbottom > pheight:
-                sim.events.emit(
-                    SoundEvent(
-                        sound_id=_failed_use_sfx(player.player_class),
-                        origin_id=id(mo),
-                        x=mo.x,
-                        y=mo.y,
-                        z=mo.z,
-                    )
-                )
+                start_sound(sim, mo, _failed_use_sfx(player.player_class))
             return True  # Keep checking behind open portal
 
         if point_on_line_side(mo.x, mo.y, li) == 1:

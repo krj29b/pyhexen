@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.fixed import FRACUNIT
+from pyhexen.sim.sound import start_platform_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import (
     find_lowest_floor_surrounding,
     find_sectors_from_tag,
@@ -60,6 +61,7 @@ class Plat(Thinker):
                 direction=self.direction,
             )
             if res == MoveResult.RES_PASTDEST:
+                stop_sequence(sim, self.sector)
                 if self.direction == -1:
                     self.direction = 0
                     self.count = self.wait
@@ -72,6 +74,7 @@ class Plat(Thinker):
             self.count -= 1
             if self.count <= 0:
                 self.direction = 1
+                start_platform_sequence(sim, self.sector)
 
     def state_tuple(self) -> tuple[Any, ...]:
         return (
@@ -111,6 +114,7 @@ def special_plat_down_wait_up_stay(
         plat = Plat(sec, (speed_byte * FRACUNIT) >> 3, low=low, high=sec.floor_height)
         sec.special_data = plat
         sim.thinkers.add(plat)
+        start_platform_sequence(sim, sec)
     return True
 
 

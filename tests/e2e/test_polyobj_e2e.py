@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from fixtures.wadbuilder import MapBuilder, WadBuilder
-from pyhexen.core.events import SoundEvent
+from pyhexen.core.events import SequenceEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT
 from pyhexen.sim.acs.vm import ACScriptState
 from pyhexen.sim.game_sim import GameSim
@@ -1199,48 +1199,48 @@ class TestFeature19CrushingDamage:
 # ---------------------------------------------------------------------------
 @skip_m2_thinkers
 class TestFeature20SoundSequences:
-    """Feature 20: Sound sequence events triggered on motion."""
+    """Feature 20: Sound sequence events triggered on motion (SN_StartSequence/SN_StopSequence)."""
 
     def test_f20_1_motion_start_emits_sound_event(self) -> None:
-        events: list[SoundEvent] = []
+        events: list[SequenceEvent] = []
         _, sim = _build_synthetic_poly_sim(tag=40, seq_type=2)
-        sim.events.subscribe(SoundEvent, lambda e: events.append(e))
+        sim.events.subscribe(SequenceEvent, events.append)
         execute_line_special(sim, 4, (40, 8, 0, 64, 0))
-        # Sound id 10 + 2 = 12 (SEQ_DOOR_STONE + seq_type)
-        assert any(e.sound_id == 12 and not getattr(e, "stop", False) for e in events)
+        # Sequence 10 + 2 = 12 (SEQ_DOOR_STONE + seq_type)
+        assert any(e.sequence == 12 and not e.stop for e in events)
 
     def test_f20_2_sound_origin_at_startspot(self) -> None:
-        events: list[SoundEvent] = []
+        events: list[SequenceEvent] = []
         level, sim = _build_synthetic_poly_sim(tag=41, spawn=(200, 300))
-        sim.events.subscribe(SoundEvent, lambda e: events.append(e))
+        sim.events.subscribe(SequenceEvent, events.append)
         execute_line_special(sim, 4, (41, 8, 0, 64, 0))
-        evt = next(e for e in events if getattr(e, "x", None) is not None)
-        assert evt.x == 200 * FRACUNIT
-        assert evt.y == 300 * FRACUNIT
+        evt = events[0]
+        assert evt.origin.x == 200 * FRACUNIT
+        assert evt.origin.y == 300 * FRACUNIT
 
     def test_f20_3_motion_stop_emits_stop_event(self) -> None:
-        events: list[SoundEvent] = []
+        events: list[SequenceEvent] = []
         _, sim = _build_synthetic_poly_sim(tag=42)
-        sim.events.subscribe(SoundEvent, lambda e: events.append(e))
+        sim.events.subscribe(SequenceEvent, events.append)
         execute_line_special(sim, 4, (42, 64, 0, 8, 0))
         for _ in range(5):
             sim.tick()
-        assert any(getattr(e, "stop", False) is True for e in events)
+        assert any(e.stop for e in events)
 
     def test_f20_4_door_restarts_sound_on_close(self) -> None:
-        events: list[SoundEvent] = []
+        events: list[SequenceEvent] = []
         _, sim = _build_synthetic_poly_sim(tag=43)
-        sim.events.subscribe(SoundEvent, lambda e: events.append(e))
+        sim.events.subscribe(SequenceEvent, events.append)
         execute_line_special(sim, 8, (43, 64, 0, 8, 2))
         for _ in range(10):
             sim.tick()
-        starts = [e for e in events if not getattr(e, "stop", False)]
+        starts = [e for e in events if not e.stop]
         assert len(starts) >= 2  # Once on open, once on close
 
     def test_f20_5_door_restarts_sound_on_reverse(self) -> None:
-        events: list[SoundEvent] = []
+        events: list[SequenceEvent] = []
         level, sim = _build_synthetic_poly_sim(tag=44, spawn=(128, 128), crush=False)
-        sim.events.subscribe(SoundEvent, lambda e: events.append(e))
+        sim.events.subscribe(SequenceEvent, events.append)
         execute_line_special(sim, 8, (44, 64, 0, 8, 1))
         sim.tick()  # opens
         # Place player blocking closing path
@@ -1249,7 +1249,7 @@ class TestFeature20SoundSequences:
         player.mo.y = 128 * FRACUNIT
         for _ in range(5):
             sim.tick()
-        starts = [e for e in events if not getattr(e, "stop", False)]
+        starts = [e for e in events if not e.stop]
         assert len(starts) >= 2
 
 

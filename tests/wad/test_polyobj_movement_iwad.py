@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from pyhexen.core.angles import ANG90
-from pyhexen.core.events import SoundEvent
+from pyhexen.core.events import SequenceEvent
 from pyhexen.sim.acs.vm import ACScriptState
 from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.info_data import MobjFlag, MobjType
@@ -47,8 +47,8 @@ def test_iwad_map01_opening_double_swinging_doors(iwad_path: Path) -> None:
     po5_v_init = [(v.x, v.y) for seg in po5.segs for v in (seg.v1, seg.v2)]
 
     # Listen for sound events on event bus
-    sound_events: list[SoundEvent] = []
-    sim.events.subscribe(SoundEvent, sound_events.append)
+    sound_events: list[SequenceEvent] = []
+    sim.events.subscribe(SequenceEvent, sound_events.append)
 
     # Line 558 has special 80 (ACS_Execute Script 2) with SPAC_USE
     line_558 = level.lines[558]

@@ -10,6 +10,7 @@ SN_StopAllSequences (sn_sonix.c).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -115,6 +116,9 @@ class SoundSequencePlayer:
         self._by_lower: dict[str, SoundSequence] = {k.lower(): v for k, v in self.sequences.items()}
         self.active_sequences: list[ActiveSequence] = []
         self._playing_sounds: set[tuple[int | None, str]] = set()
+        # Optional S_GetSoundPlayingInfo hook: (origin, sound name) -> still playing?
+        # When set, it replaces the internal bookkeeping of playing sounds.
+        self.sound_query: Callable[[Any, str], bool] | None = None
 
     @classmethod
     def from_wad(cls, wad: WadStack | WadFile) -> SoundSequencePlayer:
@@ -184,6 +188,7 @@ class SoundSequencePlayer:
                 if node.current_sound is not None:
                     self._playing_sounds.discard((origin_id, node.current_sound))
                     stop_ev = SoundEvent(
+                        origin=node.origin,
                         sound_id=node.current_sound,
                         origin_id=origin_id,
                         x=x,
@@ -198,6 +203,7 @@ class SoundSequencePlayer:
 
                 if play_stop_sound and node.stop_sound:
                     ev = SoundEvent(
+                        origin=node.origin,
                         sound_id=node.stop_sound,
                         origin_id=origin_id,
                         x=x,
@@ -233,6 +239,8 @@ class SoundSequencePlayer:
         """Return True if `node.current_sound` is marked as still playing on `node.origin`."""
         if node.current_sound is None:
             return False
+        if self.sound_query is not None:
+            return self.sound_query(node.origin, node.current_sound)
         origin_id, _, _, _ = _extract_origin_coords(node.origin)
         return (origin_id, node.current_sound) in self._playing_sounds
 
@@ -274,6 +282,7 @@ class SoundSequencePlayer:
                     node.current_sound = sound_name
                     self._playing_sounds.add((origin_id, sound_name))
                     ev = SoundEvent(
+                        origin=node.origin,
                         sound_id=sound_name,
                         origin_id=origin_id,
                         x=x,
@@ -299,6 +308,7 @@ class SoundSequencePlayer:
                     node.current_sound = sound_name
                     self._playing_sounds.add((origin_id, sound_name))
                     ev = SoundEvent(
+                        origin=node.origin,
                         sound_id=sound_name,
                         origin_id=origin_id,
                         x=x,
@@ -319,6 +329,7 @@ class SoundSequencePlayer:
                     node.current_sound = sound_name
                     self._playing_sounds.add((origin_id, sound_name))
                     ev = SoundEvent(
+                        origin=node.origin,
                         sound_id=sound_name,
                         origin_id=origin_id,
                         x=x,
@@ -337,6 +348,7 @@ class SoundSequencePlayer:
                 node.current_sound = sound_name
                 self._playing_sounds.add((origin_id, sound_name))
                 ev = SoundEvent(
+                    origin=node.origin,
                     sound_id=sound_name,
                     origin_id=origin_id,
                     x=x,

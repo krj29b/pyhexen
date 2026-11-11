@@ -2,7 +2,10 @@
 # Portions derived from Hexen (c) Raven Software / id Software and Chocolate Doom,
 # released under the GNU GPL v2. This file is licensed GPL-2.0-or-later.
 
-"""Unit tests for T11.2 (SoundSystem), T12.1 (Fonts & Overlay2D), and T12.3 (Messages)."""
+"""Unit tests for T12.1 (Fonts & Overlay2D) and T12.3 (Messages).
+
+The T11.2 SoundSystem tests moved to test_sound_system.py when T15.2 made it a Hexen port.
+"""
 
 from __future__ import annotations
 
@@ -12,14 +15,7 @@ import moderngl
 import numpy as np
 from tests.fixtures.wadbuilder import WadBuilder
 
-from pyhexen.audio.channels import (
-    NORM_SEP,
-    SoundSystem,
-    adjust_sound_params,
-)
-from pyhexen.core.angles import ANG90, ANG270
-from pyhexen.core.events import EventBus, PrintMessage, SoundEvent
-from pyhexen.core.fixed import FRACUNIT
+from pyhexen.core.events import EventBus, PrintMessage
 from pyhexen.render.overlay2d import (
     VIRTUAL_HEIGHT,
     VIRTUAL_WIDTH,
@@ -30,7 +26,6 @@ from pyhexen.render.textures import GpuTextureManager
 from pyhexen.ui.fonts import FONT_A_NUM_GLYPHS, BitmapFont, FontSet
 from pyhexen.ui.messages import MESSAGE_TICS, YELLOW_MESSAGE_Y, MessageSystem
 from pyhexen.wad.picture import Picture
-from pyhexen.wad.sndinfo import parse_sndinfo
 from pyhexen.wad.wadfile import WadFile
 
 
@@ -40,149 +35,6 @@ class _DummyMobj:
     y: int
     z: int = 0
     angle: int = 0
-
-
-def test_adjust_sound_params_distance_and_stereo_pan() -> None:
-    # Coincident with listener -> full volume, centre pan
-    res_same = adjust_sound_params(0, 0, 0, 0, 0, base_volume=120)
-    assert res_same == (120, NORM_SEP)
-
-    # Inside SOUND_CLOSE_DIST (100 units East while facing East) -> full volume, centre pan
-    res_close = adjust_sound_params(0, 0, 0, 100 * FRACUNIT, 0, base_volume=127)
-    assert res_close == (127, NORM_SEP)
-
-    # Beyond SOUND_MAX_DIST (1300 units East) -> cut off (None)
-    assert adjust_sound_params(0, 0, 0, 1300 * FRACUNIT, 0, base_volume=127) is None
-
-    # Halfway between SOUND_CLOSE_DIST (160) and SOUND_MAX_DIST (1200) -> 680 units
-    mid_dist = 680 * FRACUNIT
-    res_mid = adjust_sound_params(0, 0, 0, mid_dist, 0, base_volume=127)
-    assert res_mid is not None
-    vol_mid, sep_mid = res_mid
-    assert 60 <= vol_mid <= 65
-    assert sep_mid == NORM_SEP
-
-    # Monotonic attenuation between close and max distance
-    res_near = adjust_sound_params(0, 0, 0, 300 * FRACUNIT, 0, base_volume=127)
-    res_far = adjust_sound_params(0, 0, 0, 1000 * FRACUNIT, 0, base_volume=127)
-    assert res_near is not None and res_far is not None
-    assert 127 > res_near[0] > vol_mid > res_far[0] > 0
-
-    # Stereo separation when listener faces East (angle = 0):
-    # Source to North (+Y) is 90 deg left -> sep < 128 (32)
-    res_left = adjust_sound_params(0, 0, 0, 0, 100 * FRACUNIT, base_volume=127)
-    assert res_left is not None
-    assert res_left[1] < NORM_SEP
-    assert res_left[1] in (32, 33)
-
-    # Source to South (-Y) is 90 deg right -> sep > 128 (224)
-    res_right = adjust_sound_params(0, 0, 0, 0, -100 * FRACUNIT, base_volume=127)
-    assert res_right is not None
-    assert res_right[1] > NORM_SEP
-    assert res_right[1] == 224
-
-    # When listener rotates to face North (ANG90), source at +Y is now straight ahead (centre)
-    res_turned = adjust_sound_params(0, 0, ANG90, 0, 100 * FRACUNIT, base_volume=127)
-    assert res_turned is not None
-    assert 127 <= res_turned[1] <= 129
-
-    # And when listener faces South (ANG270), source at +X (East) is to the left
-    res_south = adjust_sound_params(0, 0, ANG270, 100 * FRACUNIT, 0, base_volume=127)
-    assert res_south is not None
-    assert res_south[1] < NORM_SEP
-
-
-def test_sound_system_events_origin_replacement_priority_and_tracking() -> None:
-    sndinfo = parse_sndinfo(
-        """
-        FighterGrunt    STNMOV
-        MageWandFire    WANDFIR
-        BellRing        BELLRNG
-        AmbInsect       INSECT1
-        """
-    )
-    bus = EventBus()
-    snd_sys = SoundSystem(sndinfo, max_channels=2, event_bus=bus)
-    snd_sys.set_listener(0, 0, 0)
-
-    actor1 = _DummyMobj(x=100 * FRACUNIT, y=0)
-    actor2 = _DummyMobj(x=0, y=100 * FRACUNIT)
-    actor3 = _DummyMobj(x=50 * FRACUNIT, y=0)
-
-    oid1 = snd_sys.register_origin(actor1)
-    oid2 = snd_sys.register_origin(actor2)
-    oid3 = snd_sys.register_origin(actor3)
-
-    snd_sys.set_sound_priority("FighterGrunt", 50)
-    snd_sys.set_sound_priority("MageWandFire", 80)
-    snd_sys.set_sound_priority("BellRing", 100)
-    snd_sys.set_sound_priority("AmbInsect", 10)
-
-    # 1. Emit SoundEvent for actor1 -> allocates channel 0
-    bus.emit(
-        SoundEvent(
-            sound_id="FighterGrunt",
-            origin_id=oid1,
-            x=actor1.x,
-            y=actor1.y,
-            volume=127,
-        )
-    )
-    assert len(snd_sys.active_channels) == 1
-    assert snd_sys.channels[0] is not None
-    assert snd_sys.channels[0].lump_name == "STNMOV"
-
-    # 2. Per-origin replacement: actor1 starts MageWandFire -> replaces channel 0
-    bus.emit(
-        SoundEvent(
-            sound_id="MageWandFire",
-            origin_id=oid1,
-            x=actor1.x,
-            y=actor1.y,
-            volume=127,
-        )
-    )
-    assert len(snd_sys.active_channels) == 1
-    assert snd_sys.channels[0] is not None
-    assert snd_sys.channels[0].sound_name == "MageWandFire"
-    assert snd_sys.channels[0].lump_name == "WANDFIR"
-
-    # 3. Fill second channel with actor2 playing FighterGrunt (priority 50)
-    bus.emit(
-        SoundEvent(
-            sound_id="FighterGrunt",
-            origin_id=oid2,
-            x=actor2.x,
-            y=actor2.y,
-            volume=127,
-        )
-    )
-    assert len(snd_sys.active_channels) == 2
-
-    # 4. Priority rejection: actor3 tries to play low-priority AmbInsect (priority 10) -> rejected
-    ch_low = snd_sys.start_sound(actor3, "AmbInsect", volume=127)
-    assert ch_low is None
-    assert {ch.sound_name for ch in snd_sys.active_channels} == {"MageWandFire", "FighterGrunt"}
-
-    # 5. Priority eviction: BellRing (100) evicts FighterGrunt (50)
-    ch_high = snd_sys.start_sound(actor3, "BellRing", volume=127, origin_id=oid3)
-    assert ch_high is not None
-    assert {ch.sound_name for ch in snd_sys.active_channels} == {"MageWandFire", "BellRing"}
-
-    # 6. Moving origin tracking: move actor1 to (500, 500) and update
-    actor1.x = 500 * FRACUNIT
-    actor1.y = 500 * FRACUNIT
-    snd_sys.update()
-    ch0 = snd_sys.channels[0]
-    assert ch0 is not None
-    assert ch0.volume < 127
-    assert ch0.separation < NORM_SEP  # +Y is to the left of listener facing East
-
-    # Move actor1 beyond SOUND_MAX_DIST -> channel 0 automatically stops on update
-    actor1.x = 2000 * FRACUNIT
-    snd_sys.update()
-    assert snd_sys.channels[0] is None
-    assert len(snd_sys.active_channels) == 1
 
 
 def test_bitmap_font_and_overlay2d_cpu_and_gpu() -> None:

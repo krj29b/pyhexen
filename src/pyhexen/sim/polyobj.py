@@ -23,12 +23,12 @@ from pyhexen.core.angles import (
     fine_cosine,
     fine_sine,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, c_div, fixed_div, fixed_mul
 from pyhexen.sim.info_data import MobjFlag
 from pyhexen.sim.map import check_position
 from pyhexen.sim.maputl import box_on_line_side
 from pyhexen.sim.mobj import Mobj
+from pyhexen.sim.sound import start_sequence, stop_sequence
 from pyhexen.sim.thinker import Thinker
 from pyhexen.world.blockmap import MAPBLOCKSHIFT, MAXRADIUS, Blockmap
 from pyhexen.world.level import (
@@ -540,16 +540,7 @@ def start_poly_sound(sim: GameSim, poly: Polyobj) -> None:
     Port of SN_StartSequence (po_man.c).
     """
     seq_id = SEQ_DOOR_STONE + (poly.seq_type if 0 <= poly.seq_type < SEQTYPE_NUMSEQ else 0)
-    sim.events.emit(
-        SoundEvent(
-            sound_id=seq_id,
-            origin_id=id(poly),
-            x=poly.start_spot.x,
-            y=poly.start_spot.y,
-            z=poly.start_spot.z,
-            stop=False,
-        )
-    )
+    start_sequence(sim, poly.start_spot, seq_id)
 
 
 def stop_poly_sound(sim: GameSim, poly: Polyobj) -> None:
@@ -557,17 +548,7 @@ def stop_poly_sound(sim: GameSim, poly: Polyobj) -> None:
 
     Port of SN_StopSequence (po_man.c).
     """
-    seq_id = SEQ_DOOR_STONE + (poly.seq_type if 0 <= poly.seq_type < SEQTYPE_NUMSEQ else 0)
-    sim.events.emit(
-        SoundEvent(
-            sound_id=seq_id,
-            origin_id=id(poly),
-            x=poly.start_spot.x,
-            y=poly.start_spot.y,
-            z=poly.start_spot.z,
-            stop=True,
-        )
-    )
+    stop_sequence(sim, poly.start_spot)
 
 
 def rotate_pt(

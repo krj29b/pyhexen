@@ -20,7 +20,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, fixed_div, fixed_mul, to_int32, to_uint32
 from pyhexen.sim.actions import action
 from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum, StateNum
@@ -28,6 +27,8 @@ from pyhexen.sim.map import try_move
 from pyhexen.sim.maputl import line_opening
 from pyhexen.sim.mobj import Mobj, set_mobj_state
 from pyhexen.sim.sight import check_sight
+from pyhexen.sim.sound import start_sound as _emit_sound_event
+from pyhexen.sim.sound import stop_sound as _stop_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
 from pyhexen.world.level import ML_SOUNDBLOCK, ML_TWOSIDED, SPAC_USE, Sector
 
@@ -103,33 +104,14 @@ def start_sound(
     s_id = int(sound_id)
     if s_id == int(SfxEnum.SFX_NONE):
         return
-    origin_id = None if (full_volume or actor is None) else actor.tid
-    x = actor.x if actor is not None else 0
-    y = actor.y if actor is not None else 0
-    z = actor.z if actor is not None else 0
-    sim.events.emit(
-        SoundEvent(
-            sound_id=s_id,
-            origin_id=origin_id,
-            x=x,
-            y=y,
-            z=z,
-            volume=127,
-        )
-    )
+    _emit_sound_event(sim, None if (full_volume or actor is None) else actor, s_id)
 
 
 def stop_sound(sim: GameSim | None, actor: Mobj | None) -> None:
     """Emit a sound stop event through the simulation event bus."""
     if sim is None or actor is None:
         return
-    sim.events.emit(
-        SoundEvent(
-            sound_id=0,
-            origin_id=actor.tid,
-            stop=True,
-        )
-    )
+    _stop_sound(sim, actor)
 
 
 # =============================================================================

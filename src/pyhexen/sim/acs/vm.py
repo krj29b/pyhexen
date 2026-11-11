@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.events import PrintMessage, SoundEvent
+from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import c_div, c_mod
 from pyhexen.sim.acs.loader import (
     ACS_STACK_DEPTH,
@@ -27,6 +27,7 @@ from pyhexen.sim.acs.loader import (
 )
 from pyhexen.sim.acs.pcodes import PCode
 from pyhexen.sim.info_data import MobjFlag, MobjType
+from pyhexen.sim.sound import start_sequence, start_sound
 from pyhexen.sim.specials.dispatcher import (
     execute_line_special,
     find_lines_from_id,
@@ -854,12 +855,9 @@ class ACSVM:
                     if 0 <= s_idx < len(self.behavior.strings)
                     else "DEFAULT"
                 )
-                x = 0
-                y = 0
-                if script.line is not None and script.line.front_sector is not None:
-                    snd_org = script.line.front_sector.sound_origin
-                    x, y = snd_org[0], snd_org[1]
-                sim.events.emit(SoundEvent(sound_id=s_name, volume=vol, x=x, y=y))
+                # The activating line's front sector sound origin, else the listener.
+                origin = script.line.front_sector if script.line is not None else None
+                start_sound(sim, origin, s_name, vol)
             elif cmd == PCode.PCD_AMBIENTSOUND:
                 vol = pop()
                 s_idx = pop()
@@ -868,7 +866,7 @@ class ACSVM:
                     if 0 <= s_idx < len(self.behavior.strings)
                     else "DEFAULT"
                 )
-                sim.events.emit(SoundEvent(sound_id=s_name, volume=vol))
+                start_sound(sim, None, s_name, vol)
             elif cmd == PCode.PCD_SOUNDSEQUENCE:
                 s_idx = pop()
                 seq_name = (
@@ -876,12 +874,10 @@ class ACSVM:
                     if 0 <= s_idx < len(self.behavior.strings)
                     else "DEFAULT"
                 )
-                x = 0
-                y = 0
-                if script.line is not None and script.line.front_sector is not None:
-                    snd_org = script.line.front_sector.sound_origin
-                    x, y = snd_org[0], snd_org[1]
-                sim.events.emit(SoundEvent(sound_id=seq_name, volume=127, x=x, y=y))
+                # SN_StartSequenceName on the activating line's front sector, or at
+                # the listener when the script has no line.
+                origin = script.line.front_sector if script.line is not None else None
+                start_sequence(sim, origin, seq_name)
             elif cmd == PCode.PCD_SETLINETEXTURE:
                 tex_idx = pop()
                 pos = pop()
@@ -933,6 +929,6 @@ class ACSVM:
                 )
                 mobjs = sim.find_mobjs_by_tid(tid)
                 for m in mobjs:
-                    sim.events.emit(SoundEvent(sound_id=s_name, volume=vol, x=m.x, y=m.y, z=m.z))
+                    start_sound(sim, m, s_name, vol)
             else:
                 pass

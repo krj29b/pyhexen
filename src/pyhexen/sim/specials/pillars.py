@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.fixed import FRACUNIT
+from pyhexen.sim.sound import start_platform_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import find_sectors_from_tag
 from pyhexen.sim.specials.floors import MoveResult, t_move_plane
 from pyhexen.sim.thinker import Thinker
@@ -71,6 +72,7 @@ class Pillar(Thinker):
                 self.ceiling_done = True
 
         if self.floor_done and self.ceiling_done:
+            stop_sequence(sim, self.sector)
             self.removed = True
             if self.sector is not None:
                 self.sector.special_data = None
@@ -115,6 +117,7 @@ def special_pillar_build(
         pillar = Pillar(sec, speed, floordest=mid, ceilingdest=mid)
         sec.special_data = pillar
         sim.thinkers.add(pillar)
+        start_platform_sequence(sim, sec)
     return True
 
 

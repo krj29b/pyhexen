@@ -25,7 +25,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import (
     FRACBITS,
     FRACUNIT,
@@ -56,6 +55,7 @@ from pyhexen.sim.mobj import (
     spawn_mobj,
 )
 from pyhexen.sim.sight import check_sight
+from pyhexen.sim.sound import start_sound
 from pyhexen.world.blockmap import MAPBLOCKSHIFT
 from pyhexen.world.level import (
     ML_TWOSIDED,
@@ -217,15 +217,7 @@ def spawn_missile(
     z -= source.floorclip
     th = spawn_mobj(sim, source.x, source.y, z, mtype)
     if th.info.seesound:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(th.info.seesound),
-                origin_id=th.tid,
-                x=th.x,
-                y=th.y,
-                z=th.z,
-            )
-        )
+        start_sound(sim, th, int(th.info.seesound))
 
     th.target = source
     an = point_to_angle2(source.x, source.y, dest.x, dest.y)
@@ -263,15 +255,7 @@ def spawn_missile_xyz(
     spawn_z = z - source.floorclip
     th = spawn_mobj(sim, x, y, spawn_z, mtype)
     if th.info.seesound:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(th.info.seesound),
-                origin_id=th.tid,
-                x=th.x,
-                y=th.y,
-                z=th.z,
-            )
-        )
+        start_sound(sim, th, int(th.info.seesound))
 
     th.target = source
     an = point_to_angle2(source.x, source.y, dest.x, dest.y)
@@ -322,15 +306,7 @@ def spawn_missile_angle(
     z -= source.floorclip
     mo = spawn_mobj(sim, source.x, source.y, z, mtype)
     if mo.info.seesound:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(mo.info.seesound),
-                origin_id=mo.tid,
-                x=mo.x,
-                y=mo.y,
-                z=mo.z,
-            )
-        )
+        start_sound(sim, mo, int(mo.info.seesound))
 
     mo.target = source
     mo.angle = angle & 0xFFFFFFFF
@@ -513,25 +489,9 @@ def spawn_puff(
     puff = spawn_mobj(sim, x, y, jitter_z, mtype)
 
     if linetarget is not None and puff.info.seesound:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(puff.info.seesound),
-                origin_id=puff.tid,
-                x=puff.x,
-                y=puff.y,
-                z=puff.z,
-            )
-        )
+        start_sound(sim, puff, int(puff.info.seesound))
     elif puff.info.attacksound:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(puff.info.attacksound),
-                origin_id=puff.tid,
-                x=puff.x,
-                y=puff.y,
-                z=puff.z,
-            )
-        )
+        start_sound(sim, puff, int(puff.info.attacksound))
 
     match mtype:
         case MobjType.MT_PUNCHPUFF:
@@ -887,29 +847,13 @@ def line_attack(
     if unobstructed:
         # Ray reached full distance without hit
         if m_puff_type == MobjType.MT_PUNCHPUFF:
-            sim.events.emit(
-                SoundEvent(
-                    sound_id=int(SfxEnum.SFX_FIGHTER_PUNCH_MISS),
-                    origin_id=t1.tid,
-                    x=t1.x,
-                    y=t1.y,
-                    z=t1.z,
-                )
-            )
+            start_sound(sim, t1, int(SfxEnum.SFX_FIGHTER_PUNCH_MISS))
         elif m_puff_type in (
             MobjType.MT_HAMMERPUFF,
             MobjType.MT_AXEPUFF,
             MobjType.MT_AXEPUFF_GLOW,
         ):
-            sim.events.emit(
-                SoundEvent(
-                    sound_id=int(SfxEnum.SFX_FIGHTER_HAMMER_MISS),
-                    origin_id=t1.tid,
-                    x=t1.x,
-                    y=t1.y,
-                    z=t1.z,
-                )
-            )
+            start_sound(sim, t1, int(SfxEnum.SFX_FIGHTER_HAMMER_MISS))
         elif m_puff_type == MobjType.MT_FLAMEPUFF:
             spawned_puff = spawn_puff(
                 sim,

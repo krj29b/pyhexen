@@ -21,7 +21,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, c_div, fixed_div, fixed_mul, to_uint32
 from pyhexen.sim.info_data import (
     MobjFlag,
@@ -39,6 +38,7 @@ from pyhexen.sim.player import (
     PlayerClass,
     PlayerState,
 )
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
 
 if TYPE_CHECKING:
@@ -306,15 +306,7 @@ def falling_damage(sim: GameSim, player: Player) -> None:
         damage = mo.health - 1
 
     if damage > 0:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(SfxEnum.SFX_PLAYER_LAND),
-                origin_id=mo.tid,
-                x=mo.x,
-                y=mo.y,
-                z=mo.z,
-            )
-        )
+        start_sound(sim, mo, int(SfxEnum.SFX_PLAYER_LAND))
         damage_mobj(sim, mo, None, None, damage)
 
 
@@ -450,15 +442,7 @@ def damage_mobj(
                         False,
                     )
                     poison_player(player, source, 50)
-                    sim.events.emit(
-                        SoundEvent(
-                            sound_id=int(SfxEnum.SFX_PLAYER_POISONCOUGH),
-                            origin_id=target.tid,
-                            x=target.x,
-                            y=target.y,
-                            z=target.z,
-                        )
-                    )
+                    start_sound(sim, target, int(SfxEnum.SFX_PLAYER_POISONCOUGH))
                 return
             elif not (target.flags & MobjFlag.MF_COUNTKILL):
                 return
@@ -601,15 +585,7 @@ def damage_mobj(
                         MobjType.MT_ETTIN,
                     )
                 ):
-                    sim.events.emit(
-                        SoundEvent(
-                            sound_id=int(SfxEnum.SFX_PUPPYBEAT),
-                            origin_id=target.tid,
-                            x=target.x,
-                            y=target.y,
-                            z=target.z,
-                        )
-                    )
+                    start_sound(sim, target, int(SfxEnum.SFX_PUPPYBEAT))
         else:
             target.flags |= MobjFlag.MF_JUSTHIT
             if target.info.painstate != StateNum.S_NULL:
@@ -626,15 +602,7 @@ def damage_mobj(
                     MobjType.MT_ETTIN,
                 )
             ):
-                sim.events.emit(
-                    SoundEvent(
-                        sound_id=int(SfxEnum.SFX_PUPPYBEAT),
-                        origin_id=target.tid,
-                        x=target.x,
-                        y=target.y,
-                        z=target.z,
-                    )
-                )
+                start_sound(sim, target, int(SfxEnum.SFX_PUPPYBEAT))
 
     target.reactiontime = 0
     if (
@@ -751,15 +719,7 @@ def kill_mobj(sim: GameSim, source: Mobj | None, target: Mobj) -> None:
             burn_info = PLAYER_BURN_INFO.get(int(player.player_class))
             if burn_info is not None:
                 st, sfx = burn_info
-                sim.events.emit(
-                    SoundEvent(
-                        sound_id=int(sfx),
-                        origin_id=target.tid,
-                        x=target.x,
-                        y=target.y,
-                        z=target.z,
-                    )
-                )
+                start_sound(sim, target, int(sfx))
                 set_mobj_state(sim, target, st)
                 return
 
@@ -777,29 +737,13 @@ def kill_mobj(sim: GameSim, source: Mobj | None, target: Mobj) -> None:
         boss_burn = BOSS_BURN_INFO.get(int(target.type))
         if boss_burn is not None:
             st, sfx = boss_burn
-            sim.events.emit(
-                SoundEvent(
-                    sound_id=int(sfx),
-                    origin_id=target.tid,
-                    x=target.x,
-                    y=target.y,
-                    z=target.z,
-                )
-            )
+            start_sound(sim, target, int(sfx))
             set_mobj_state(sim, target, st)
             return
         elif target.type == MobjType.MT_TREEDESTRUCTIBLE:
             set_mobj_state(sim, target, StateNum.S_ZTREEDES_X1)
             target.height = 24 * FRACUNIT
-            sim.events.emit(
-                SoundEvent(
-                    sound_id=int(SfxEnum.SFX_TREE_EXPLODE),
-                    origin_id=target.tid,
-                    x=target.x,
-                    y=target.y,
-                    z=target.z,
-                )
-            )
+            start_sound(sim, target, int(SfxEnum.SFX_TREE_EXPLODE))
             return
 
     # Monster ice death

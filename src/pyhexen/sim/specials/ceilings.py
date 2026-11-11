@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.fixed import FRACUNIT
+from pyhexen.sim.sound import start_platform_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import find_sectors_from_tag
 from pyhexen.sim.specials.floors import MoveResult, t_move_plane
 from pyhexen.sim.thinker import Thinker
@@ -55,6 +56,7 @@ class CeilingMove(Thinker):
             direction=self.direction,
         )
         if res == MoveResult.RES_PASTDEST:
+            stop_sequence(sim, self.sector)
             if self.repeat:
                 self.direction = -self.direction
             else:
@@ -109,6 +111,7 @@ def special_ceiling_lower_by_value(
         )
         sec.special_data = c
         sim.thinkers.add(c)
+        start_platform_sequence(sim, sec)
     return True
 
 
@@ -130,6 +133,7 @@ def special_ceiling_raise_by_value(
         )
         sec.special_data = c
         sim.thinkers.add(c)
+        start_platform_sequence(sim, sec)
     return True
 
 
@@ -153,6 +157,7 @@ def special_ceiling_crush_and_raise(
         )
         sec.special_data = c
         sim.thinkers.add(c)
+        start_platform_sequence(sim, sec)
     return True
 
 

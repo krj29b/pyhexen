@@ -20,6 +20,7 @@ from pyhexen.app.dialog import prompt_for_iwad, show_error_dialog
 from pyhexen.app.game_flow import GameFlow, GameState
 from pyhexen.app.input import InputHandler
 from pyhexen.app.main_loop import FixedTimestepAccumulator
+from pyhexen.audio.game_audio import GameAudio
 from pyhexen.core.ticcmd import TicCmd
 from pyhexen.render.camera import Camera
 from pyhexen.render.context import RenderContext
@@ -68,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Player class",
     )
     parser.add_argument("--fly", action="store_true", help="Start in free-fly camera mode")
+    parser.add_argument("--nosound", action="store_true", help="Disable sound effects and music")
     parser.add_argument(
         "--headless-frames",
         type=int,
@@ -205,6 +207,18 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     camera = Camera()
     flow = GameFlow(stack, map_table)
     demo_recorder: DemoRecorder | None = None
+    audio: GameAudio | None = None
+    if not is_headless and not args.nosound:
+        audio = GameAudio(
+            stack,
+            map_table,
+            sfx_volume=config.audio.sfx_volume,
+            music_volume=config.audio.music_volume,
+        )
+        flow.title.on_music = audio.play_music
+        flow.intermission.on_music = audio.play_music
+        flow.intermission.on_sound = audio.ui_sound
+        flow.finale.on_music = audio.play_music
 
     def update_camera(*, snap: bool = False) -> None:
         player = flow.player
@@ -222,6 +236,8 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         # Passing the sim's event bus lets the renderer rebuild moving sectors.
         renderer.load_map(stack, sim.level, info, event_bus=sim.events, rng=sim.rng)
         update_camera(snap=True)
+        if audio is not None:
+            audio.start_level(sim.map_num)
         if not is_headless:
             pygame.display.set_caption(f"PyHexen - {sim.level.name}")
         if args.record and demo_recorder is None:
@@ -300,6 +316,8 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     menu_mgr.on_end_game = flow.start_title
     menu_mgr.on_new_game = flow.new_game
     menu_mgr.on_suicide = on_suicide
+    if audio is not None:
+        menu_mgr.on_sound = audio.ui_sound
 
     apply_config(config)
 
@@ -410,7 +428,12 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
                     suicide_pending = False
 
                 was_level = flow.state == GameState.LEVEL
-                flow.tick(cmds)
+                events = flow.tick(cmds)
+                if audio is not None:
+                    audio.handle_events(events)
+                    listener = flow.player.mo if in_level() and flow.player else None
+                    audio.tick(listener)
+                    audio.set_volumes(config.audio.sfx_volume, config.audio.music_volume)
                 if was_level and demo_recorder is not None and demo_player is None:
                     demo_recorder.record_tic(cmds)
 

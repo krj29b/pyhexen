@@ -27,7 +27,7 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import PrintMessage, SoundEvent
+from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, fixed_mul, to_int32, to_uint32
 from pyhexen.core.ticcmd import BT_ATTACK
 from pyhexen.sim.actions import ActionCallable, action, get_action
@@ -42,6 +42,7 @@ from pyhexen.sim.info_data import (
     StateNum,
 )
 from pyhexen.sim.mobj import Mobj, remove_mobj, set_mobj_state
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
 
 if TYPE_CHECKING:
@@ -368,19 +369,7 @@ def _emit_sound(
     sid = int(sound_id)
     if sid <= 0:
         return
-    origin_id = None if (full_volume or actor is None) else actor.tid
-    x = actor.x if actor is not None else 0
-    y = actor.y if actor is not None else 0
-    z = actor.z if actor is not None else 0
-    sim.events.emit(
-        SoundEvent(
-            sound_id=sid,
-            origin_id=origin_id,
-            x=x,
-            y=y,
-            z=z,
-        )
-    )
+    start_sound(sim, None if (full_volume or actor is None) else actor, sid)
 
 
 def _set_player_message(sim: GameSim, player: Player, msg: str) -> None:

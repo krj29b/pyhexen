@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 T = TypeVar("T")
@@ -16,7 +16,12 @@ T = TypeVar("T")
 
 @dataclass(slots=True, frozen=True)
 class SoundEvent:
-    """Emitted when the simulation starts or stops a sound effect."""
+    """Emitted when the simulation starts or stops a sound effect.
+
+    `origin` is the emitting object (Mobj, sector, polyobject spot or fixed point)
+    so the audio layer can follow it as it moves; `None` means "at the listener".
+    Build these with `pyhexen.sim.sound`.
+    """
 
     sound_id: int | str
     origin_id: int | None = None
@@ -24,6 +29,20 @@ class SoundEvent:
     y: int = 0
     z: int = 0
     volume: int = 127
+    stop: bool = False
+    origin: Any = field(default=None, compare=False)
+
+
+@dataclass(slots=True, frozen=True)
+class SequenceEvent:
+    """Emitted when a sound sequence (SNDSEQ) starts or stops on an origin.
+
+    `sequence` is a `SEQ_*` number or a sequence name. Port of the
+    SN_StartSequence / SN_StopSequence calls in the sim.
+    """
+
+    origin: Any = field(compare=False)
+    sequence: int | str
     stop: bool = False
 
 

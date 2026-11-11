@@ -20,11 +20,11 @@ from pyhexen.core.angles import (
     fine_cosine,
     fine_sine,
 )
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACUNIT, c_div, fixed_mul
 from pyhexen.sim.info_data import MOBJINFO, MobjFlag, MobjFlag2, MobjType, SfxEnum
 from pyhexen.sim.map import check_on_mobj, slide_move, try_move
 from pyhexen.sim.mobj import FLOAT_BOB_OFFSETS, Mobj, remove_mobj, set_mobj_state
+from pyhexen.sim.sound import start_sound
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -62,35 +62,11 @@ def explode_missile(sim: GameSim, mo: Mobj) -> None:
     set_mobj_state(sim, mo, MOBJINFO[mo.type].deathstate)
     mo.flags &= ~MobjFlag.MF_MISSILE
     if mo.type in (MobjType.MT_SORCBALL1, MobjType.MT_SORCBALL2, MobjType.MT_SORCBALL3):
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(SfxEnum.SFX_SORCERER_BIGBALLEXPLODE),
-                origin_id=0,
-                x=mo.x,
-                y=mo.y,
-                z=mo.z,
-            )
-        )
+        start_sound(sim, None, int(SfxEnum.SFX_SORCERER_BIGBALLEXPLODE))
     elif mo.type == MobjType.MT_SORCFX1:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(SfxEnum.SFX_SORCERER_HEADSCREAM),
-                origin_id=0,
-                x=mo.x,
-                y=mo.y,
-                z=mo.z,
-            )
-        )
+        start_sound(sim, None, int(SfxEnum.SFX_SORCERER_HEADSCREAM))
     elif mo.info.deathsound:
-        sim.events.emit(
-            SoundEvent(
-                sound_id=int(mo.info.deathsound),
-                origin_id=mo.tid,
-                x=mo.x,
-                y=mo.y,
-                z=mo.z,
-            )
-        )
+        start_sound(sim, mo, int(mo.info.deathsound))
 
 
 def p_xy_movement(sim: GameSim, mo: Mobj) -> None:

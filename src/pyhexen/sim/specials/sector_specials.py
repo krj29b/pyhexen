@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.angles import ANG45, ANG90, ANG180, ANG270
-from pyhexen.core.events import SoundEvent
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, fixed_div
 from pyhexen.sim.info_data import SfxEnum
+from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import get_next_sector, notify_sector_changed
 from pyhexen.sim.specials.scroll import spawn_line_scrollers
 from pyhexen.sim.thinker import Thinker
@@ -199,15 +199,7 @@ def _apply_player_damage(sim: GameSim, player: Player, amount: int) -> None:
     player.health -= amount
     mo.health = player.health
     player.damagecount += amount
-    sim.events.emit(
-        SoundEvent(
-            sound_id=int(SfxEnum.SFX_LAVA_SIZZLE),
-            origin_id=id(mo),
-            x=mo.x,
-            y=mo.y,
-            z=mo.z,
-        )
-    )
+    start_sound(sim, mo, int(SfxEnum.SFX_LAVA_SIZZLE))
 
 
 def p_player_in_special_sector(sim: GameSim, player: Player) -> None:

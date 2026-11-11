@@ -13,8 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pyhexen.core.events import SectorChanged, SoundEvent
+from pyhexen.core.events import SectorChanged
 from pyhexen.sim.info_data import SfxEnum
+from pyhexen.sim.sound import start_sound
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -154,7 +155,7 @@ class SurfaceAnimator:
                 found_sec = True
 
         if found_sec:
-            sim.events.emit(SoundEvent(sound_id=int(SfxEnum.SFX_THUNDER_CRASH)))
+            start_sound(sim, None, int(SfxEnum.SFX_THUNDER_CRASH))
 
         if self.next_lightning_flash == 0:
             if sim.rng.p_random() < 50:

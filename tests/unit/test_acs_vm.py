@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pyhexen.core.events import PrintMessage, SoundEvent
+from pyhexen.core.events import PrintMessage, SequenceEvent, SoundEvent
 from pyhexen.sim.acs.loader import (
     ACScriptDef,
     ACScriptState,
@@ -538,15 +538,19 @@ class TestACSGamePCodes:
         sim.acs_vm = vm
 
         sounds: list[SoundEvent] = []
+        sequences: list[SequenceEvent] = []
         sim.events.subscribe(SoundEvent, sounds.append)
+        sim.events.subscribe(SequenceEvent, sequences.append)
 
         vm.start_script(1, sim=sim)
         sim.tick()
 
-        assert len(sounds) == 2
+        assert len(sounds) == 1
         assert sounds[0].sound_id == "Thunder"
         assert sounds[0].volume == 127
-        assert sounds[1].sound_id == "Seq1"
+        assert sounds[0].origin is None  # ambient: at the listener
+        # No activating line: the sequence plays at the listener (origin None).
+        assert [(e.sequence, e.origin, e.stop) for e in sequences] == [("Seq1", None, False)]
 
     def test_tagwait_and_tag_finished(self) -> None:
         """Test PCD_TAGWAIT and tag_finished wake-up."""

@@ -522,19 +522,27 @@ def move(arg1: Any, arg2: Any = None) -> bool:
             actor.flags |= MobjFlag.MF_INFLOAT
             return True
 
+        # Open any specials. With none touched, movedir is left alone.
+        spechit = sim.map_state.spechit
+        if not spechit:
+            return False
         actor.movedir = DI_NODIR
-        spechits = list(sim.map_state.spechit) or list(sim.map_state.last_spechit)
         good = False
         from pyhexen.sim.line_activation import p_activate_line
 
-        while spechits:
-            ld = spechits.pop()
+        while spechit:
+            ld = spechit.pop()
+            # if the special isn't a door that can be opened, return false
             if p_activate_line(sim, ld, actor, 0, SPAC_USE):
                 good = True
         return good
 
     actor.flags &= ~MobjFlag.MF_INFLOAT
     if not (actor.flags & MobjFlag.MF_FLOAT):
+        if actor.z > actor.floorz:
+            from pyhexen.sim.actions.monsters_common import hit_floor
+
+            hit_floor(sim, actor)
         actor.z = actor.floorz
     return True
 

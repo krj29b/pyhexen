@@ -29,13 +29,10 @@ from pyhexen.render.overlay2d import Overlay2D
 from pyhexen.render.psprites import PspriteRenderer
 from pyhexen.render.renderer import WorldRenderer
 from pyhexen.sim.game_sim import GameSim
-from pyhexen.sim.mobj import spawn_map_things
-from pyhexen.sim.player import spawn_player
 from pyhexen.ui.menu import MenuManager, PromptType
 from pyhexen.ui.statusbar import StatusBar, get_sb_palette
 from pyhexen.wad.mapinfo import MapInfo, MapInfoTable, load_mapinfo
 from pyhexen.wad.wadfile import WadStack
-from pyhexen.world.level import load_level
 
 if TYPE_CHECKING:
     from pyhexen.sim.demo import DemoPlayer
@@ -148,19 +145,6 @@ def describe_view(sim: GameSim | None, player: Player | None) -> str:
     )
 
 
-def _build_demo_sim(stack: WadStack, map_table: MapInfoTable, demo_player: DemoPlayer) -> GameSim:
-    """Build the sim for a demo the same way S1 playback does."""
-    header = demo_player.demo.header
-    info = map_table.get(header.map_num)
-    level = load_level(stack, info.lump_name if info else f"MAP{header.map_num:02d}")
-    sim = GameSim(level=level, skill=header.skill - 1, player_class=header.player_class)
-    sim.map_num = header.map_num
-    sim.rng.set_state(header.rng_state)
-    spawn_map_things(sim)
-    spawn_player(sim, 0)
-    return sim
-
-
 def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     """Set up the game-flow controller and run the main rendering/game loop."""
     config = load_config()
@@ -170,7 +154,12 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
             stack.add_wad(pwad)
 
     from pyhexen.app.savegame import SaveGameManager, compute_wad_checksum
-    from pyhexen.sim.demo import DemoPlayer, DemoRecorder, play_demo_to_completion
+    from pyhexen.sim.demo import (
+        DemoPlayer,
+        DemoRecorder,
+        build_demo_sim,
+        play_demo_to_completion,
+    )
 
     map_table = load_mapinfo(stack)
     pclass_idx = {"fighter": 0, "cleric": 1, "mage": 2}.get(args.player_class.lower(), 0)
@@ -182,8 +171,15 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
 
     if args.timedemo:
         assert demo_player is not None
-        sim = _build_demo_sim(stack, map_table, demo_player)
+        sim = build_demo_sim(stack, map_table, demo_player.demo)
         matched = play_demo_to_completion(sim, demo_player)
+        if not demo_player.has_state_hash:
+            print(
+                f"Timedemo finished: {demo_player.total_tics} tics. This demo has no state "
+                "hash, so sync was not checked (vanilla demos: python -m "
+                "pyhexen.tools.demo_sync)."
+            )
+            return 0
         status = "PASSED" if matched else "FAILED"
         print(f"Timedemo finished: {demo_player.total_tics} tics. Determinism: {status}")
         return 0 if matched else 1
@@ -239,7 +235,7 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         nonlocal demo_recorder
         assert sim.level is not None
         # Passing the sim's event bus lets the renderer rebuild moving sectors.
-        renderer.load_map(stack, sim.level, info, event_bus=sim.events, rng=sim.rng)
+        renderer.load_map(stack, sim.level, info, event_bus=sim.events)
         update_camera(snap=True)
         if game_ui is not None:
             game_ui.on_level_loaded(sim, info)
@@ -256,7 +252,9 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
 
     if demo_player is not None:
         flow.demo_playback = True
-        flow.enter_level(_build_demo_sim(stack, map_table, demo_player))
+        demo_sim = build_demo_sim(stack, map_table, demo_player.demo)
+        flow.surface_animator = demo_sim.surface_animator
+        flow.enter_level(demo_sim)
     elif warp_map is not None:
         flow.init_new(warp_map, pclass_idx, skill)
     else:
@@ -505,9 +503,12 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         print(f"Recorded demo: {saved_demo.header.total_tics} tics to {demo_recorder.file_path}")
 
     if demo_player is not None and flow.sim is not None:
-        matched = demo_player.check_determinism(flow.sim)
-        status = "PASSED" if matched else "FAILED"
-        print(f"Demo playback finished. Determinism check: {status}")
+        if demo_player.has_state_hash:
+            matched = demo_player.check_determinism(flow.sim)
+            status = "PASSED" if matched else "FAILED"
+            print(f"Demo playback finished. Determinism check: {status}")
+        else:
+            print("Demo playback finished. The demo has no state hash; sync not checked.")
 
     ctx.close()
     return 0

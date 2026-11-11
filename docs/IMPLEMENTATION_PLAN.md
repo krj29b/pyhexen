@@ -822,6 +822,14 @@ Chocolate Hexen for DEMO1–3, compare them tic by tic, and report the first div
 Make `check_determinism` stop treating an empty hash as a pass. Accept: S1 is verified
 against reference traces, or the first divergence is filed as a task.
 
+**T15.6a P_ChangeSector port**: port P_ChangeSector, PIT_ChangeSector and P_ThingHeightClip (p_map.c) and use them from T_MovePlane (p_floor.c), including crush damage, gibs, blood and backing the plane out. Accept: DEMO1 stays in sync past tic 420.
+
+**T15.6b Heresiarch port**: port the A_Sorc* actions (ball orbit, speed changes, stopping, spell casting) from p_enemy.c. Accept: DEMO2 stays in sync past tic 3.
+
+**T15.6c DEMO3 sync**: find and fix the divergence at DEMO3 tic 171, then continue. Accept: DEMO3 stays in sync past tic 171.
+
+**T15.6d Renderer reads sim animation state**: draw animated surfaces, sky scrolling and lightning from `sim.surface_animator`, and remove the renderer's own copies. Accept: animated flats and the sky move in the running game; the renderer never touches the sim RNG.
+
 **T15.7 Real playthrough checklist**: replace the 35-tic smoke run in
 `tools/playthrough_audit.py` with a scripted or manual hub-by-hub checklist per class that
 uses the T15.1 game flow. File bugs as `T15.7.x`. **Milestone M6.**

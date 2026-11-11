@@ -26,6 +26,7 @@ from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.hub import HubManager, remove_all_thinkers
 from pyhexen.sim.message import set_message
 from pyhexen.sim.player import PlayerState
+from pyhexen.sim.specials.anim import SurfaceAnimator, load_surface_animator
 from pyhexen.ui.intermission import Finale, Intermission, TitleLoop
 from pyhexen.world.level import load_level
 
@@ -102,6 +103,8 @@ class GameFlow:
 
         self.state: GameState = GameState.TITLE
         self.sim: GameSim | None = None
+        # P_InitFTAnims runs once at startup; the animation state carries over maps.
+        self.surface_animator: SurfaceAnimator = load_surface_animator(wad)
         self.hub: HubManager = HubManager()
         self.skill: int = 2
         self.player_class: int = 0
@@ -158,6 +161,11 @@ class GameFlow:
         """Port of P_GetMapCluster (p_setup.c)."""
         info = self.mapinfo.get(map_num) if self.mapinfo is not None else None
         return info.cluster if info is not None else 1
+
+    def map_lightning(self, map_num: int) -> bool:
+        """P_GetMapLightning: the MAPINFO `lightning` flag."""
+        info = self.mapinfo.get(map_num) if self.mapinfo is not None else None
+        return bool(info is not None and info.lightning)
 
     def next_map(self, map_num: int) -> int:
         """Port of P_TranslateMap(P_GetMapNextMap(map)) (p_tick.c:72)."""
@@ -298,7 +306,8 @@ class GameFlow:
         sim.map_num = map_num
         sim.cluster = self.map_cluster(map_num)
         self.hub.current_cluster = sim.cluster
-        sim.setup_level(player_nums=(0,))
+        sim.surface_animator = self.surface_animator
+        sim.setup_level(player_nums=(0,), lightning=self.map_lightning(map_num))
         self._enter_level(sim)
 
     def _enter_level(self, sim: GameSim) -> None:
@@ -426,7 +435,8 @@ class GameFlow:
         sim = GameSim(level=level, skill=self.skill, player_class=self.player_class)
         sim.map_num = map_num
         sim.cluster = cluster
-        sim.setup_level()
+        sim.surface_animator = self.surface_animator
+        sim.setup_level(lightning=self.map_lightning(map_num))
         remove_all_thinkers(sim)
         rng_state = sim.rng.get_state()
         unarchive(sim)

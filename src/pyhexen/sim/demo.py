@@ -21,6 +21,7 @@ from pyhexen.core.ticcmd import TicCmd
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
+    from pyhexen.wad.mapinfo import MapInfoTable
     from pyhexen.wad.wadfile import WadFile, WadStack
 
 DEMO_MAGIC: bytes = b"PXDM"  # PyHexen Demo
@@ -499,10 +500,21 @@ class DemoPlayer:
         self.current_tic += 1
         return cmds
 
+    @property
+    def has_state_hash(self) -> bool:
+        """True when the demo recorded a final state hash (PyHexen demos do, vanilla don't)."""
+        return bool(self.demo.header.final_state_hash)
+
     def check_determinism(self, sim: GameSim) -> bool:
-        """Verify that simulation state hash exactly matches the recorded demo."""
+        """Verify that simulation state hash exactly matches the recorded demo.
+
+        A demo without a hash (every vanilla demo) has nothing to compare, so it does
+        not pass: this returns False. Check `has_state_hash` to tell the cases apart;
+        vanilla demos are verified against Chocolate Hexen traces with
+        `python -m pyhexen.tools.demo_sync`.
+        """
         if not self.demo.header.final_state_hash:
-            return True
+            return False
         return sim.state_hash() == self.demo.header.final_state_hash
 
 
@@ -511,7 +523,10 @@ def play_demo_to_completion(
     player: DemoPlayer,
     on_tic: Callable[[int, GameSim], None] | None = None,
 ) -> bool:
-    """Run simulation through all demo tics and return whether state hash matched."""
+    """Run simulation through all demo tics and return whether state hash matched.
+
+    Returns False for a demo without a state hash (see DemoPlayer.check_determinism).
+    """
     while not player.is_finished:
         cmds = player.get_next_cmds()
         sim.tick(cmds)
@@ -519,3 +534,25 @@ def play_demo_to_completion(
             on_tic(player.current_tic, sim)
 
     return player.check_determinism(sim)
+
+
+def build_demo_sim(wad: WadStack | WadFile, mapinfo: MapInfoTable, demo: Demo) -> GameSim:
+    """Set up a demo's level like G_DoPlayDemo -> G_InitNew -> G_DoLoadLevel.
+
+    The demo starts from the title screen, so the surface animations are fresh
+    (P_InitFTAnims at startup). Players spawn at their starts during thing loading.
+    """
+    from pyhexen.sim.game_sim import GameSim
+    from pyhexen.sim.specials.anim import load_surface_animator
+    from pyhexen.world.level import load_level
+
+    header = demo.header
+    info = mapinfo.get(header.map_num)
+    level = load_level(wad, info.lump_name if info else f"MAP{header.map_num:02d}")
+    sim = GameSim(level=level, skill=header.skill - 1, player_class=header.player_class)
+    sim.map_num = header.map_num
+    sim.cluster = info.cluster if info else 1
+    sim.next_map = info.next_map if info else 0
+    sim.surface_animator = load_surface_animator(wad)
+    sim.setup_level(player_nums=(0,), lightning=bool(info and info.lightning))
+    return sim

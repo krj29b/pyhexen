@@ -332,7 +332,7 @@ def test_line_attack_hits_wall_spawns_puff(tmp_path: Path) -> None:
 def test_line_attack_sky_wall_suppresses_puff(tmp_path: Path) -> None:
     mb = MapBuilder("MAP01")
     # Room with sky ceiling
-    mb.add_room(x=0, y=0, width=256, height=256, ceiling_pic="F_SKY1")
+    mb.add_room(x=0, y=0, width=256, height=256, ceiling_pic="F_SKY")
     level = _build_level(mb, tmp_path)
     sim_obj = GameSim(level=level, rng=Random())
 
@@ -518,7 +518,7 @@ def test_missile_wall_collision_explodes(tmp_path: Path) -> None:
 
 def test_missile_sky_ceiling_removed_without_explosion(tmp_path: Path) -> None:
     mb = MapBuilder("MAP01")
-    mb.add_room(x=0, y=0, width=256, height=256, ceiling_pic="F_SKY1")
+    mb.add_room(x=0, y=0, width=256, height=256, ceiling_pic="F_SKY")
     level = _build_level(mb, tmp_path)
     sim_obj = GameSim(level=level, rng=Random())
 

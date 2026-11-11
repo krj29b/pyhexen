@@ -19,7 +19,9 @@ from pyhexen.sim.sound import start_sound
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
+    from pyhexen.wad.wadfile import WadFile, WadStack
 
+SKYFLATNAME: str = "F_SKY"
 LIGHTNING_SPECIAL: int = 198
 LIGHTNING_SPECIAL2: int = 199
 SKYCHANGE_SPECIAL: int = 200
@@ -27,7 +29,11 @@ SKYCHANGE_SPECIAL: int = 200
 
 @dataclass(slots=True)
 class AnimFrameDef:
-    """Single animation frame definition `(frame_name, tics, rand_min, rand_max)`."""
+    """Single animation frame definition `(frame_name, tics, rand_min, rand_max)`.
+
+    A frame with `rand_max > 0` came from `rand <min> <max>` (vanilla stores it as
+    `tics > 255`) and lasts `rand_min + P_Random() % (rand_max - rand_min + 1)` tics.
+    """
 
     frame_name: str
     tics: int
@@ -64,6 +70,8 @@ class SurfaceAnimator:
     next_lightning_flash: int = 0
     lightning_flash: int = 0
     saved_light_levels: dict[int, int] = field(default_factory=dict)
+    # True while a flash shows the map's second sky (vanilla sets Sky1Texture to sky2).
+    sky_flash: bool = False
 
     def add_sequence(
         self,
@@ -91,14 +99,14 @@ class SurfaceAnimator:
     def init_lightning(self, sim: GameSim, enabled: bool = False) -> None:
         """Port of P_InitLightning (p_anim.c)."""
         self.lightning_flash = 0
+        self.sky_flash = False
         self.saved_light_levels.clear()
         if not enabled or sim.level is None:
             self.level_has_lightning = False
             return
 
         has_sky_or_special = any(
-            sec.ceiling_pic.startswith("F_SKY")
-            or sec.special in (LIGHTNING_SPECIAL, LIGHTNING_SPECIAL2)
+            sec.ceiling_pic == SKYFLATNAME or sec.special in (LIGHTNING_SPECIAL, LIGHTNING_SPECIAL2)
             for sec in sim.level.sectors
         )
         if not has_sky_or_special:
@@ -132,6 +140,7 @@ class SurfaceAnimator:
                         sec.light_level = self.saved_light_levels[sec.index]
                         sim.events.emit(SectorChanged(sector_index=sec.index))
                 self.saved_light_levels.clear()
+                self.sky_flash = False
             return
 
         self.lightning_flash = (sim.rng.p_random() & 7) + 8
@@ -139,7 +148,7 @@ class SurfaceAnimator:
         found_sec = False
 
         for sec in sim.level.sectors:
-            is_sky = sec.ceiling_pic.startswith("F_SKY")
+            is_sky = sec.ceiling_pic == SKYFLATNAME
             if is_sky or sec.special in (LIGHTNING_SPECIAL, LIGHTNING_SPECIAL2):
                 orig = sec.light_level
                 self.saved_light_levels[sec.index] = orig
@@ -155,6 +164,7 @@ class SurfaceAnimator:
                 found_sec = True
 
         if found_sec:
+            self.sky_flash = True
             start_sound(sim, None, int(SfxEnum.SFX_THUNDER_CRASH))
 
         if self.next_lightning_flash == 0:
@@ -172,7 +182,7 @@ class SurfaceAnimator:
             if seq.tics <= 0:
                 seq.current_frame = (seq.current_frame + 1) % len(seq.frames)
                 frame = seq.frames[seq.current_frame]
-                if frame.rand_max > frame.rand_min > 0:
+                if frame.rand_max > 0:
                     mod = frame.rand_max - frame.rand_min + 1
                     seq.tics = frame.rand_min + (sim.rng.p_random() % mod)
                 else:
@@ -198,3 +208,36 @@ def p_animate_surfaces(sim: GameSim) -> None:
     """Port of P_AnimateSurfaces (p_anim.c)."""
     if sim.surface_animator is not None:
         sim.surface_animator.tick(sim)
+
+
+def load_surface_animator(wad: WadStack | WadFile) -> SurfaceAnimator:
+    """Port of P_InitFTAnims (p_anim.c): build the animation state from ANIMDEFS.
+
+    Vanilla runs this once at startup (P_Init) and the state carries over from map
+    to map. Definitions whose flat or texture is missing are skipped, as vanilla does.
+    Frame names hold the ANIMDEFS pic numbers (only the renderer needs real names).
+    """
+    animator = SurfaceAnimator()
+    if wad.find("ANIMDEFS") is None:
+        return animator
+    from pyhexen.wad.animdefs import load_animdefs
+    from pyhexen.wad.textures import TextureRegistry
+
+    textures: TextureRegistry | None = None
+    for anim in load_animdefs(wad):
+        if anim.is_flat:
+            if wad.find(anim.name) is None:
+                continue
+        else:
+            if textures is None:
+                textures = TextureRegistry(wad)
+            if textures.check_num_for_name(anim.name) == -1:
+                continue
+        frames = [
+            AnimFrameDef(
+                frame_name=str(f.index), tics=f.tics, rand_min=f.rand_min, rand_max=f.rand_max
+            )
+            for f in anim.frames
+        ]
+        animator.add_sequence(anim.name, frames, is_flat=anim.is_flat)
+    return animator

@@ -12,6 +12,7 @@ P_CreateTIDList, P_InsertMobjIntoTIDList, P_RemoveMobjFromTIDList, P_FindMobjFro
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -152,7 +153,7 @@ class Mobj(Thinker):
     prev_angle: int = 0
     sprite: int = 0
     frame: int = 0
-    floorpic: int = 0
+    floorpic: int | str = 0
     radius: int = 0
     height: int = 0
     momx: int = 0
@@ -619,6 +620,16 @@ def spawn_mobj(
     else:
         mobj.z = z
 
+    if (
+        mobj.flags2 & MobjFlag2.MF2_FLOORCLIP
+        and mobj.subsector is not None
+        and mobj.z == mobj.subsector.sector.floor_height
+    ):
+        from pyhexen.sim.actions.monsters_common import FLOOR_LIQUID, get_thing_floor_type
+
+        if get_thing_floor_type(mobj) >= FLOOR_LIQUID:
+            mobj.floorclip = 10 * FRACUNIT
+
     mobj.capture_prev_state()
     sim.thinkers.add(mobj)
     return mobj
@@ -691,6 +702,10 @@ def spawn_map_thing(sim: GameSim, mthing: MapThing) -> Mobj | None:
 
     info = MOBJINFO[mtype]
 
+    # Don't spawn keys and players in deathmatch
+    if sim.deathmatch and (info.flags & MobjFlag.MF_NOTDMATCH):
+        return None
+
     # Check -nomonsters
     if sim.nomonsters and (info.flags & MobjFlag.MF_COUNTKILL):
         return None
@@ -709,6 +724,8 @@ def spawn_map_thing(sim: GameSim, mthing: MapThing) -> Mobj | None:
     else:
         z = ONFLOORZ
 
+    if mtype == MobjType.MT_ZLYNCHED_NOHEART:
+        spawn_mobj(sim, x, y, ONFLOORZ, MobjType.MT_BLOODPOOL)
     mobj = spawn_mobj(sim, x, y, z, mtype)
     if z == ONFLOORZ:
         mobj.z += height_fixed
@@ -746,13 +763,40 @@ def spawn_map_thing(sim: GameSim, mthing: MapThing) -> Mobj | None:
     return mobj
 
 
-def spawn_map_things(sim: GameSim) -> list[Mobj]:
-    """Spawn all map things in `sim.level.things` in lump order."""
+def _player_start_num(thing_type: int) -> int | None:
+    """Player number for a player start thing (1..4 and 9100..9103), else None."""
+    if 1 <= thing_type <= 4:
+        return thing_type - 1
+    if 9100 <= thing_type <= 9103:
+        return 4 + thing_type - 9100
+    return None
+
+
+def spawn_map_things(sim: GameSim, player_nums: Sequence[int] = ()) -> list[Mobj]:
+    """Spawn all map things in `sim.level.things` in lump order.
+
+    Port of the P_LoadThings loop (p_setup.c). As in P_SpawnMapThing, a player in
+    `player_nums` is spawned the moment its start (spot group 0) is reached, so the
+    player mobj sits at that point in the thinker list, which fixes the order of
+    every later thinker and P_Random call. Vanilla spawns again at a duplicate start
+    (leaving a "voodoo doll"); here each player spawns once, at the first start.
+    Players without a start, and every player in deathmatch, spawn after the things.
+    """
+    from pyhexen.sim.player import spawn_player
+
     if sim.level is None:
         return []
+    pending = list(dict.fromkeys(player_nums))
     spawned: list[Mobj] = []
     for mthing in sim.level.things:
         mo = spawn_map_thing(sim, mthing)
         if mo is not None:
             spawned.append(mo)
+            continue
+        num = _player_start_num(mthing.type)
+        if num in pending and not sim.deathmatch and mthing.args[0] == 0:
+            spawn_player(sim, num)
+            pending.remove(num)
+    for num in pending:
+        spawn_player(sim, num)
     return spawned

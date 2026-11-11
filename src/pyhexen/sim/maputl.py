@@ -254,6 +254,21 @@ def _traverse_intercepts(
     return True
 
 
+def trace_origin(level: Level, x1: int, y1: int) -> tuple[int, int]:
+    """Start of P_PathTraverse's `trace`: nudged off block boundaries.
+
+    P_PathTraverse moves the start by one unit when it lies exactly on a blockmap
+    line ("don't side exactly on a line"). PTR_ShootTraverse positions puffs from
+    `trace.x/y`, so callers that need those positions use this too.
+    """
+    bm = level.blockmap
+    if ((x1 - bm.org_x) & (MAPBLOCKSIZE - 1)) == 0:
+        x1 += FRACUNIT
+    if ((y1 - bm.org_y) & (MAPBLOCKSIZE - 1)) == 0:
+        y1 += FRACUNIT
+    return x1, y1
+
+
 def path_traverse(
     level: Level,
     x1: int,
@@ -271,10 +286,7 @@ def path_traverse(
     bm = level.blockmap
     valid_count = bm.next_valid_count()
 
-    if ((x1 - bm.org_x) & (MAPBLOCKSIZE - 1)) == 0:
-        x1 += FRACUNIT
-    if ((y1 - bm.org_y) & (MAPBLOCKSIZE - 1)) == 0:
-        y1 += FRACUNIT
+    x1, y1 = trace_origin(level, x1, y1)
 
     trace = DivLine(x=x1, y=y1, dx=x2 - x1, dy=y2 - y1)
     intercepts: list[Intercept] = []

@@ -71,12 +71,11 @@ class MapCheckState:
     tmfloorz: int = 0
     tmceilingz: int = 0
     tmdropoffz: int = 0
-    tmfloorpic: int = 0
+    tmfloorpic: int | str = 0
     ceilingline: Line | None = None
     blocking_mobj: Mobj | None = None
     floatok: bool = False
     spechit: list[Line] = field(default_factory=list)
-    last_spechit: list[Line] = field(default_factory=list)
     crossed_lines: list[Line] = field(default_factory=list)
     # Slide move state
     slide_mo: Mobj | None = None
@@ -311,6 +310,7 @@ def check_position(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
     st.tmfloorz = newsubsec.sector.floor_height
     st.tmdropoffz = st.tmfloorz
     st.tmceilingz = newsubsec.sector.ceiling_height
+    st.tmfloorpic = newsubsec.sector.floor_pic
 
     bm = level.blockmap
     valid_count = bm.next_valid_count()
@@ -344,15 +344,29 @@ def check_position(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
             ):
                 return False
 
-    st.last_spechit = list(st.spechit)
     return True
 
 
+def _push_line(sim: GameSim, thing: Mobj) -> bool:
+    """The `pushline:` exit of P_TryMove: blasted damage and push specials, then fail."""
+    if not (thing.flags & (MobjFlag.MF_TELEPORT | MobjFlag.MF_NOCLIP)):
+        tmthing = sim.map_state.tmthing
+        if tmthing is not None and tmthing.flags2 & MobjFlag2.MF2_BLASTED:
+            from pyhexen.sim.inter import damage_mobj
+
+            damage_mobj(
+                sim, target=tmthing, inflictor=None, source=None, damage=tmthing.info.mass >> 5
+            )
+        _check_spechit_push(sim, thing, thing.x, thing.y)
+    return False
+
+
 def _check_spechit_push(sim: GameSim, thing: Mobj, oldx: int, oldy: int) -> None:
-    """Trigger push/impact specials on lines in `spechit` when movement fails."""
-    st = sim.map_state
-    while st.spechit:
-        ld = st.spechit.pop()
+    """Trigger push specials on lines in `spechit` when movement fails.
+
+    Like vanilla (numSpecHitTemp), the list is left intact: P_Move uses it next.
+    """
+    for ld in reversed(list(sim.map_state.spechit)):
         side = point_on_line_side(oldx, oldy, ld)
         check_for_push_special(sim, ld, side, thing)
 
@@ -370,9 +384,22 @@ def try_move(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
     oldy = thing.y
 
     if not check_position(sim, thing, x, y):
-        if st.blocking_mobj is None:
-            _check_spechit_push(sim, thing, oldx, oldy)
-        return False
+        # Solid wall or thing. A player may still step up onto a low enough mobj.
+        blocker = st.blocking_mobj
+        if blocker is None or blocker.player is not None or thing.player is None:
+            return _push_line(sim, thing)
+        blocker_top = blocker.z + blocker.height
+        blocker_ceiling = (
+            blocker.subsector.sector.ceiling_height
+            if blocker.subsector is not None
+            else st.tmceilingz
+        )
+        if (
+            blocker_top - thing.z > STEPHEIGHT
+            or blocker_ceiling - blocker_top < thing.height
+            or st.tmceilingz - blocker_top < thing.height
+        ):
+            return _push_line(sim, thing)
 
     if level is None:
         thing.x = x
@@ -381,48 +408,68 @@ def try_move(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
 
     if not (thing.flags & MobjFlag.MF_NOCLIP):
         if st.tmceilingz - st.tmfloorz < thing.height:
-            # Doesn't fit
-            _check_spechit_push(sim, thing, oldx, oldy)
-            return False
+            return _push_line(sim, thing)  # Doesn't fit
 
         st.floatok = True
+        if (
+            not (thing.flags & MobjFlag.MF_TELEPORT)
+            and st.tmceilingz - thing.z < thing.height
+            and thing.type != MobjType.MT_LIGHTNING_CEILING
+            and not (thing.flags2 & MobjFlag2.MF2_FLY)
+        ):
+            return _push_line(sim, thing)  # mobj must lower itself to fit
+
+        if thing.flags2 & MobjFlag2.MF2_FLY:
+            if thing.z + thing.height > st.tmceilingz:
+                thing.momz = -8 * FRACUNIT
+                return _push_line(sim, thing)
+            if thing.z < st.tmfloorz and st.tmfloorz - st.tmdropoffz > STEPHEIGHT:
+                thing.momz = 8 * FRACUNIT
+                return _push_line(sim, thing)
 
         if (
             not (thing.flags & MobjFlag.MF_TELEPORT)
-            and (st.tmceilingz - thing.z < thing.height)
-            and not (thing.flags2 & MobjFlag2.MF2_FLY)
+            # The Minotaur floor fire (MT_MNTRFX2) can step up any amount
+            and thing.type != MobjType.MT_MNTRFX2
+            and thing.type != MobjType.MT_LIGHTNING_FLOOR
+            and st.tmfloorz - thing.z > STEPHEIGHT
         ):
-            # Mobj must lower itself to fit
-            _check_spechit_push(sim, thing, oldx, oldy)
-            return False
-
-        if not (thing.flags & MobjFlag.MF_TELEPORT):
-            if st.tmfloorz - thing.z > STEPHEIGHT:
-                # Too big a step up
-                _check_spechit_push(sim, thing, oldx, oldy)
-                return False
-
-        if (thing.flags & MobjFlag.MF_MISSILE) and st.tmfloorz > thing.z:
-            _check_spechit_push(sim, thing, oldx, oldy)
-            return False
+            return _push_line(sim, thing)
 
         if (
             not (thing.flags & (MobjFlag.MF_DROPOFF | MobjFlag.MF_FLOAT))
-            and (st.tmfloorz - st.tmdropoffz > STEPHEIGHT)
+            and st.tmfloorz - st.tmdropoffz > STEPHEIGHT
             and not (thing.flags2 & MobjFlag2.MF2_BLASTED)
         ):
-            # Don't stand over a dropoff
-            return False
+            return False  # Can't move over a dropoff unless it's been blasted
 
-    # Move is valid; relink thing into new position
-    if level is not None:
-        unset_thing_position(level, thing)
+        if thing.flags2 & MobjFlag2.MF2_CANTLEAVEFLOORPIC and (
+            thing.subsector is None
+            or st.tmfloorpic != thing.subsector.sector.floor_pic
+            or st.tmfloorz - thing.z != 0
+        ):
+            return False  # must stay within a sector of a certain floor type
+
+    # The move is ok, so link the thing into its new position
+    unset_thing_position(level, thing)
     thing.floorz = st.tmfloorz
     thing.ceilingz = st.tmceilingz
+    thing.floorpic = st.tmfloorpic
     thing.x = x
     thing.y = y
-    if level is not None:
-        set_thing_position(level, thing)
+    set_thing_position(level, thing)
+
+    if thing.flags2 & MobjFlag2.MF2_FLOORCLIP:
+        from pyhexen.sim.actions.monsters_common import FLOOR_LIQUID, get_thing_floor_type
+
+        if (
+            thing.subsector is not None
+            and thing.z == thing.subsector.sector.floor_height
+            and get_thing_floor_type(thing) >= FLOOR_LIQUID
+        ):
+            thing.floorclip = 10 * FRACUNIT
+        else:
+            thing.floorclip = 0
 
     # Check if any special lines were crossed
     if not (thing.flags & (MobjFlag.MF_TELEPORT | MobjFlag.MF_NOCLIP)):
@@ -463,6 +510,7 @@ def teleport_move(sim: GameSim, thing: Mobj, x: int, y: int, boss: bool = False)
 
     thing.floorz = st.tmfloorz
     thing.ceilingz = st.tmceilingz
+    thing.floorpic = st.tmfloorpic
     thing.x = x
     thing.y = y
 

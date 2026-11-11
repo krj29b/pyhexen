@@ -48,6 +48,7 @@ from pyhexen.sim.maputl import (
     line_opening,
     path_traverse,
     point_on_divline_side,
+    trace_origin,
 )
 from pyhexen.sim.mobj import (
     ONFLOORZ,
@@ -561,8 +562,8 @@ def aim_line_attack(
     and stores target in sim.linetarget and sim.map_state.linetarget. Returns 0 if no target.
     """
     angle_fine = ((angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT) & FINEMASK
-    x2 = t1.x + fixed_mul(distance, fine_cosine(angle_fine))
-    y2 = t1.y + fixed_mul(distance, fine_sine(angle_fine))
+    x2 = t1.x + (distance >> FRACBITS) * fine_cosine(angle_fine)
+    y2 = t1.y + (distance >> FRACBITS) * fine_sine(angle_fine)
     shootz = t1.z + (t1.height >> 1) + 8 * FRACUNIT
     topslope = TOPSLOPE
     bottomslope = BOTTOMSLOPE
@@ -584,8 +585,6 @@ def aim_line_attack(
                 return False  # door closed completely
 
             dist = fixed_mul(attackrange, in_intercept.frac)
-            if dist <= 0:
-                dist = 1
 
             if (
                 li.front_sector is not None
@@ -619,8 +618,6 @@ def aim_line_attack(
             return True
 
         dist = fixed_mul(attackrange, in_intercept.frac)
-        if dist <= 0:
-            dist = 1
 
         thingtopslope = fixed_div(th.z + th.height - shootz, dist)
         if thingtopslope < bottomslope:
@@ -634,7 +631,7 @@ def aim_line_attack(
         if thingbottomslope < bottomslope:
             thingbottomslope = bottomslope
 
-        aimslope = (thingtopslope + thingbottomslope) // 2
+        aimslope = c_div(thingtopslope + thingbottomslope, 2)
         linetarget = th
         return False
 
@@ -694,12 +691,16 @@ def line_attack(
     """
     m_puff_type = MobjType(puff_type)
     angle_fine = ((angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT) & FINEMASK
-    x2 = t1.x + fixed_mul(distance, fine_cosine(angle_fine))
-    y2 = t1.y + fixed_mul(distance, fine_sine(angle_fine))
+    x2 = t1.x + (distance >> FRACBITS) * fine_cosine(angle_fine)
+    y2 = t1.y + (distance >> FRACBITS) * fine_sine(angle_fine)
     shootz = t1.z + (t1.height >> 1) + 8 * FRACUNIT - t1.floorclip
     attackrange = distance
     aimslope = slope
     spawned_puff: Mobj | None = None
+    # PTR_ShootTraverse places puffs along P_PathTraverse's (nudged) trace.
+    trace_x, trace_y = trace_origin(sim.level, t1.x, t1.y) if sim.level else (t1.x, t1.y)
+    trace_dx = x2 - trace_x
+    trace_dy = y2 - trace_y
 
     from pyhexen.sim.inter import damage_mobj
     from pyhexen.sim.line_activation import p_activate_line
@@ -719,8 +720,6 @@ def line_attack(
 
             open_info = line_opening(li)
             dist = fixed_mul(attackrange, in_intercept.frac)
-            if dist <= 0:
-                dist = 1
 
             if (
                 li.front_sector is not None
@@ -749,8 +748,6 @@ def line_attack(
             return True
 
         dist = fixed_mul(attackrange, in_intercept.frac)
-        if dist <= 0:
-            dist = 1
 
         thingtopslope = fixed_div(th.z + th.height - shootz, dist)
         if thingtopslope < aimslope:
@@ -762,8 +759,8 @@ def line_attack(
         # Hit thing! Setback = 10 * FRACUNIT / attackrange
         setback = fixed_div(10 * FRACUNIT, attackrange) if attackrange > 0 else 0
         frac = in_intercept.frac - setback
-        hit_x = t1.x + fixed_mul(x2 - t1.x, frac)
-        hit_y = t1.y + fixed_mul(y2 - t1.y, frac)
+        hit_x = trace_x + fixed_mul(trace_dx, frac)
+        hit_y = trace_y + fixed_mul(trace_dy, frac)
         hit_z = shootz + fixed_mul(aimslope, fixed_mul(frac, attackrange))
 
         sim.linetarget = th
@@ -797,14 +794,14 @@ def line_attack(
         # Hit line setback = 4 * FRACUNIT / attackrange
         setback = fixed_div(4 * FRACUNIT, attackrange) if attackrange > 0 else 0
         frac = in_intercept.frac - setback
-        hit_x = t1.x + fixed_mul(x2 - t1.x, frac)
-        hit_y = t1.y + fixed_mul(y2 - t1.y, frac)
+        hit_x = trace_x + fixed_mul(trace_dx, frac)
+        hit_y = trace_y + fixed_mul(trace_dy, frac)
         hit_z = shootz + fixed_mul(aimslope, fixed_mul(frac, attackrange))
 
-        if li.front_sector is not None and li.front_sector.ceiling_pic.startswith("F_SKY"):
+        if li.front_sector is not None and li.front_sector.ceiling_pic == "F_SKY":
             if hit_z > li.front_sector.ceiling_height:
                 return False  # Sky absorption
-            if li.back_sector is not None and li.back_sector.ceiling_pic.startswith("F_SKY"):
+            if li.back_sector is not None and li.back_sector.ceiling_pic == "F_SKY":
                 return False  # Sky hack wall
 
         sim.linetarget = None

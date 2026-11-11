@@ -39,6 +39,7 @@ from pyhexen.sim.mobj import (
     Mobj,
     remove_mobj,
     set_mobj_state,
+    set_mobj_state_nf,
     spawn_mobj,
 )
 from pyhexen.sim.movement import thrust_mobj
@@ -424,13 +425,15 @@ def a_fogmove(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> None:
     if not is_moving:
         return
 
-    life = (actor.args[3] if len(actor.args) > 3 else 0) - 1
-    actor.args = (actor.args[0], actor.args[1], actor.args[2], life, actor.args[4])
+    # if (actor->args[3]-- <= 0): test the old value; args are bytes.
+    life = actor.args[3] if len(actor.args) > 3 else 0
+    remaining = (life - 1) & 0xFF
+    actor.args = (actor.args[0], actor.args[1], actor.args[2], remaining, actor.args[4])
     if life <= 0:
-        set_mobj_state(sim, actor, actor.info.deathstate)
+        set_mobj_state_nf(sim, actor, actor.info.deathstate)
         return
 
-    if (life % 4) == 0:
+    if (remaining % 4) == 0:
         weave = int(actor.special2) if isinstance(actor.special2, int) else 0
         actor.z += FLOAT_BOB_OFFSETS[weave & 63] >> 1
         actor.special2 = (weave + 1) & 63

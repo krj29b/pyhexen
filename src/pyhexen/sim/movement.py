@@ -20,7 +20,7 @@ from pyhexen.core.angles import (
     fine_cosine,
     fine_sine,
 )
-from pyhexen.core.fixed import FRACUNIT, c_div, fixed_mul
+from pyhexen.core.fixed import FRACUNIT, c_div, fixed_mul, to_int32
 from pyhexen.sim.info_data import MOBJINFO, MobjFlag, MobjFlag2, MobjType, SfxEnum
 from pyhexen.sim.map import check_on_mobj, slide_move, try_move
 from pyhexen.sim.mobj import FLOAT_BOB_OFFSETS, Mobj, remove_mobj, set_mobj_state
@@ -163,6 +163,15 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
         return
 
     # Friction
+    from pyhexen.sim.actions.monsters_common import FLOOR_ICE, get_thing_floor_type
+    from pyhexen.sim.player import CF_NOMOMENTUM, PSTATE_NORMAL, PSTATE_RUN
+
+    player = mo.player
+    if player is not None and player.cheats & CF_NOMOMENTUM:
+        mo.momx = 0  # debug option for no sliding at all
+        mo.momy = 0
+        return
+
     if mo.flags & (MobjFlag.MF_MISSILE | MobjFlag.MF_SKULLFLY):
         return  # No friction for missiles ever
 
@@ -170,6 +179,7 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
         mo.z > mo.floorz
         and not (mo.flags2 & MobjFlag2.MF2_FLY)
         and not (mo.flags2 & MobjFlag2.MF2_ONMOBJ)
+        and mo.type != MobjType.MT_BLASTEFFECT
     ):
         return  # No friction when airborne
 
@@ -183,7 +193,16 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
             if mo.subsector is not None and mo.floorz != mo.subsector.sector.floor_height:
                 return
 
-    if -STOPSPEED < mo.momx < STOPSPEED and -STOPSPEED < mo.momy < STOPSPEED:
+    if (
+        -STOPSPEED < mo.momx < STOPSPEED
+        and -STOPSPEED < mo.momy < STOPSPEED
+        and (player is None or (player.cmd.forwardmove == 0 and player.cmd.sidemove == 0))
+    ):
+        if player is not None:
+            # If in a walking frame, stop moving (unsigned compare: 0..3 frames in)
+            pclass = player.player_class
+            if 0 <= mo.state_num - PSTATE_RUN[pclass] < 4:
+                set_mobj_state(sim, mo, PSTATE_NORMAL[pclass])
         mo.momx = 0
         mo.momy = 0
     else:
@@ -194,12 +213,12 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
         ):
             mo.momx = fixed_mul(mo.momx, FRICTION_FLY)
             mo.momy = fixed_mul(mo.momy, FRICTION_FLY)
-        elif mo.subsector is not None and mo.subsector.sector.special == 15:
+        elif get_thing_floor_type(mo) == FLOOR_ICE:
             mo.momx = fixed_mul(mo.momx, FRICTION_LOW)
             mo.momy = fixed_mul(mo.momy, FRICTION_LOW)
         else:
-            mo.momx = fixed_mul(mo.momx, ORIG_FRICTION)
-            mo.momy = fixed_mul(mo.momy, ORIG_FRICTION)
+            mo.momx = fixed_mul(mo.momx, FRICTION_NORMAL)
+            mo.momy = fixed_mul(mo.momy, FRICTION_NORMAL)
 
 
 def p_z_movement(sim: GameSim, mo: Mobj) -> None:
@@ -286,7 +305,8 @@ def p_mobj_thinker(sim: GameSim, mobj: Mobj) -> None:
     if mobj.flags2 & MobjFlag2.MF2_FLOATBOB:
         base_offset = mobj.special1 if isinstance(mobj.special1, int) else 0
         mobj.z = mobj.floorz + base_offset + FLOAT_BOB_OFFSETS[mobj.health & 63]
-        mobj.health = (mobj.health + 1) & 63
+        # Vanilla keeps the whole counter (health++), only the index is masked.
+        mobj.health = to_int32(mobj.health + 1)
     elif (mobj.z != mobj.floorz) or mobj.momz != 0:
         if mobj.flags2 & MobjFlag2.MF2_PASSMOBJ:
             onmo = check_on_mobj(sim, mobj)

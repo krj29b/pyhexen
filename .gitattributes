@@ -1,0 +1,2 @@
+# The trace build script runs under /bin/sh in a Linux container.
+tools/demo_trace/*.sh text eol=lf

@@ -907,8 +907,8 @@ def test_move_blasted_monster_skips_movement_stepping() -> None:
     assert ettin.x == 100 * FRACUNIT
 
 
-def test_move_blocked_by_solid_wall_clears_movedir() -> None:
-    """Move into a solid wall fails and resets movedir to DI_NODIR."""
+def test_move_blocked_by_solid_wall_keeps_movedir() -> None:
+    """Move into a solid wall fails; with no special lines touched P_Move leaves movedir."""
     sim = _make_two_room_sim()
     ettin = spawn_mobj(sim, 10 * FRACUNIT, 128 * FRACUNIT, 0, MobjType.MT_ETTIN)
     # Moving West into left boundary wall at x=0
@@ -916,7 +916,7 @@ def test_move_blocked_by_solid_wall_clears_movedir() -> None:
 
     success = move(sim, ettin)
     assert success is False
-    assert ettin.movedir == DI_NODIR
+    assert ettin.movedir == DI_WEST
 
 
 def test_move_blocked_calls_p_activate_line_with_spac_use() -> None:
@@ -1189,8 +1189,10 @@ def test_combat_flow_alert_to_melee_strike() -> None:
     assert ettin.target is player
     assert ettin.state_num == ettin.info.seestate
 
-    # 3. Chase tics until reaching melee range
-    for _ in range(60):
+    # 3. Chase tics until reaching melee range. A new mobj's movedir is DI_EAST (zeroed
+    #    memory) and P_NewChaseDir never turns straight around, so the ettin first walks
+    #    to the far wall and back.
+    for _ in range(200):
         if ettin.state_num == ettin.info.meleestate:
             break
         a_chase(sim, ettin)

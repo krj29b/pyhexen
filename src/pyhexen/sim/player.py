@@ -40,7 +40,7 @@ from pyhexen.core.ticcmd import (
     TicCmd,
     unpack_lookfly,
 )
-from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, StateNum
+from pyhexen.sim.info_data import MF_TRANSSHIFT, MobjFlag, MobjFlag2, MobjType, StateNum
 from pyhexen.sim.line_activation import p_use_lines
 from pyhexen.sim.mobj import ONFLOORZ, Mobj, set_mobj_state, spawn_mobj
 from pyhexen.sim.psprites import (
@@ -731,6 +731,14 @@ def spawn_player(
     pclass = sim.player_class & 3
     mtype = PLAYER_MOBJ_TYPES[pclass]
     mo = spawn_mobj(sim, spawn_x, spawn_y, ONFLOORZ, mtype)
+    # Translation table bits: the first Fighter start is blue, the third keeps the
+    # Fighter's own gold; other starts use translation (start type - 1).
+    start_type = player_num + 1
+    if pclass == 0 and start_type in (1, 3):
+        if start_type == 1:
+            mo.flags |= 2 << MF_TRANSSHIFT
+    elif start_type > 1:
+        mo.flags |= (start_type - 1) << MF_TRANSSHIFT
     mo.angle = to_uint32(angle)
 
     player = Player(

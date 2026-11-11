@@ -148,7 +148,9 @@ class HubManager:
         # Both branches run a full level setup first, as vanilla does: SV_MapTeleport
         # calls G_InitNew for a new map, and SV_LoadMap calls it before unarchiving.
         # That clears the RNG, fills player starts and rebuilds tagged lines.
-        dest_sim.setup_level()
+        dest_sim.surface_animator = sim.surface_animator  # P_InitFTAnims state carries over
+        dest_info = mapinfo_table.get(res.target_map) if mapinfo_table is not None else None
+        dest_sim.setup_level(lightning=bool(dest_info is not None and dest_info.lightning))
         if self.has_map(res.target_map):
             # RemoveAllThinkers, then unarchive. The RNG is not part of a vanilla
             # map archive, so keep the post-setup RNG state.

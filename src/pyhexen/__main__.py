@@ -18,6 +18,7 @@ from pyhexen.app.config import Config, load_config, resolve_iwad
 from pyhexen.app.crash import crash_guard
 from pyhexen.app.dialog import prompt_for_iwad, show_error_dialog
 from pyhexen.app.game_flow import GameFlow, GameState
+from pyhexen.app.game_ui import GameUI
 from pyhexen.app.input import InputHandler
 from pyhexen.app.main_loop import FixedTimestepAccumulator
 from pyhexen.audio.game_audio import GameAudio
@@ -169,7 +170,7 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
             stack.add_wad(pwad)
 
     from pyhexen.sim.demo import DemoPlayer, DemoRecorder, play_demo_to_completion
-    from pyhexen.sim.savegame import compute_wad_checksum
+    from pyhexen.sim.savegame import SaveGameManager, compute_wad_checksum
 
     map_table = load_mapinfo(stack)
     pclass_idx = {"fighter": 0, "cleric": 1, "mage": 2}.get(args.player_class.lower(), 0)
@@ -205,7 +206,11 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     psprite_renderer = PspriteRenderer(stack)
     statusbar = StatusBar(stack)
     camera = Camera()
-    flow = GameFlow(stack, map_table)
+    saves: SaveGameManager | None = None
+    if not is_headless:
+        saves = SaveGameManager("saves", iwad_checksum=compute_wad_checksum(iwad_path))
+    flow = GameFlow(stack, map_table, saves=saves)
+    game_ui: GameUI | None = None
     demo_recorder: DemoRecorder | None = None
     audio: GameAudio | None = None
     if not is_headless and not args.nosound:
@@ -236,6 +241,8 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         # Passing the sim's event bus lets the renderer rebuild moving sectors.
         renderer.load_map(stack, sim.level, info, event_bus=sim.events, rng=sim.rng)
         update_camera(snap=True)
+        if game_ui is not None:
+            game_ui.on_level_loaded(sim, info)
         if audio is not None:
             audio.start_level(sim.map_num)
         if not is_headless:
@@ -283,6 +290,7 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
 
     def apply_config(cfg: Config) -> None:
         renderer.fov_deg = cfg.video.fov
+        ui.line_vis.fov_deg = cfg.video.fov
         renderer.authentic_lowres = cfg.video.authentic_lowres
         renderer.set_smooth_filter(cfg.video.smooth_filter)
         camera.true_pitch = cfg.video.true_pitch
@@ -319,6 +327,12 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     if audio is not None:
         menu_mgr.on_sound = audio.ui_sound
 
+    # Automap, HUD messages and the save/load menu (sets the menu's save/load callbacks).
+    ui = GameUI(stack, flow, menu_mgr, saves=saves, statusbar=statusbar)
+    game_ui = ui
+    if flow.sim is not None:  # a --warp level was loaded before the UI existed
+        ui.on_level_loaded(flow.sim, map_table.get(flow.sim.map_num))
+
     apply_config(config)
 
     def menu_open() -> bool:
@@ -336,8 +350,10 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
             elif event.type == pygame.KEYDOWN:
                 if menu_open():
                     menu_mgr.handle_key(event.key, event.unicode)
-                elif event.key == pygame.K_ESCAPE or flow.state == GameState.TITLE:
-                    # Any key on the title screen opens the menu (H2_Responder).
+                elif flow.state == GameState.TITLE:
+                    # F-keys work; any other key opens the menu (H2_Responder).
+                    ui.handle_title_key(event.key, event.unicode)
+                elif event.key == pygame.K_ESCAPE and not in_level():
                     menu_mgr.activate_menu()
                 elif flow.state == GameState.INTERMISSION:
                     flow.intermission.handle_key(event.key)
@@ -353,11 +369,18 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
                     info = describe_view(flow.sim, flow.player)
                     Path(saved).with_suffix(".txt").write_text(info + "\n", encoding="utf-8")
                     print(f"Saved screenshot: {saved}\n{info}")
+                elif ui.handle_key_down(event.key, event.unicode):
+                    pass  # the menu (Escape, F-keys) or the automap (Tab, map keys) ate it
                 elif not args.fly:
                     input_handler.process_event(event)
             elif event.type == pygame.KEYUP:
-                if not menu_open() and in_level() and not args.fly:
-                    input_handler.process_event(event)
+                if not menu_open() and in_level():
+                    ui.handle_key_up(event.key)
+                    if not args.fly:
+                        input_handler.process_event(event)
+            elif event.type == pygame.MOUSEWHEEL:
+                if not menu_open() and in_level():
+                    ui.handle_mouse_wheel(event.y)
             elif event.type == pygame.MOUSEMOTION:
                 if menu_mgr.active:
                     vx, vy = window_to_virtual(*event.pos, overlay_box, ctx.height)
@@ -437,9 +460,11 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
                 if was_level and demo_recorder is not None and demo_player is None:
                     demo_recorder.record_tic(cmds)
 
+                ui.tick()
                 if in_level():
                     player = flow.player
                     assert player is not None
+                    ui.mark_seen()
                     statusbar.tick(player)
                     if not args.fly:
                         update_camera()
@@ -448,12 +473,18 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         palette = 0
         overlay.clear()
         if in_level() and flow.sim is not None and player is not None:
-            renderer.render_frame(camera, flow.sim, alpha=accumulator.alpha)
+            if ui.view_hidden:
+                ctx.clear(0.0, 0.0, 0.0, 1.0)  # the parchment automap replaces the view
+            else:
+                renderer.render_frame(camera, flow.sim, alpha=accumulator.alpha)
             if not args.fly:
-                psprite_renderer.draw(
-                    overlay, player, fullscreen=statusbar.fullscreen, alpha=accumulator.alpha
-                )
+                if not ui.automap_active:
+                    psprite_renderer.draw(
+                        overlay, player, fullscreen=statusbar.fullscreen, alpha=accumulator.alpha
+                    )
+                ui.draw_automap(overlay)
                 statusbar.draw(overlay, player, level_time=flow.sim.level_time)
+                ui.draw_message(overlay, player)
                 palette = get_sb_palette(player)
         else:
             ctx.clear(0.0, 0.0, 0.0, 1.0)

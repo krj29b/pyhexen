@@ -183,6 +183,7 @@ class Player:
     inv_ptr: int = 0
     message: str = ""
     message_tics: int = 0
+    ultimate_message: bool = False
     yellow_message: bool = False
     damagecount: int = 0
     bonuscount: int = 0
@@ -231,6 +232,7 @@ class Player:
             "inv_ptr": self.inv_ptr,
             "message": self.message,
             "message_tics": self.message_tics,
+            "ultimate_message": self.ultimate_message,
             "yellow_message": self.yellow_message,
             "damagecount": self.damagecount,
             "bonuscount": self.bonuscount,
@@ -277,6 +279,7 @@ class Player:
         self.inv_ptr = state.get("inv_ptr", 0)
         self.message = state.get("message", "")
         self.message_tics = state.get("message_tics", 0)
+        self.ultimate_message = state.get("ultimate_message", False)
         self.yellow_message = state.get("yellow_message", False)
         self.damagecount = state.get("damagecount", 0)
         self.bonuscount = state.get("bonuscount", 0)
@@ -554,7 +557,12 @@ def p_player_think(sim: GameSim, player: Player) -> None:
         cmd.sidemove = 0
         mo.flags &= ~MobjFlag.MF_JUSTATTACKED
 
-    player.message_tics -= 1
+    # messageTics is above the rest of the counters so that messages will
+    # go away, even in death.
+    player.message_tics -= 1  # Can go negative
+    if player.message_tics in (0, -1):
+        player.ultimate_message = False  # clear out any chat messages.
+        player.yellow_message = False
     player.world_timer += 1
 
     if player.player_state == PlayerState.PST_DEAD:

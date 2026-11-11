@@ -10,6 +10,7 @@ AM_drawWalls, AM_drawPlayers, AM_drawThings, and AM_drawGrid (am_map.c).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -42,6 +43,9 @@ BLUEKEY: int = 157  # Intra-level teleport line (special 70, 71)
 YELLOWKEY: int = 137
 GREENKEY: int = 198  # Locked door line (special 13, 83)
 THINGCOLORS: int = 8  # Green monster/thing indicators
+
+AMSTR_FOLLOWON: str = "FOLLOW MODE ON"
+AMSTR_FOLLOWOFF: str = "FOLLOW MODE OFF"
 
 # Dimensions
 FINIT_WIDTH: int = 320
@@ -222,6 +226,15 @@ class AutoMap:
         self._saved_m_y: int = 0
         self._is_max_zoom: bool = False
 
+        # Level the scale was set up for (AM_Start's lastlevel).
+        self._last_level: Level | None = None
+        # Held pan/zoom keys (m_paninc, mtof_zoommul), applied every tic.
+        self._pan_x: int = 0
+        self._pan_y: int = 0
+        self._zoom_dir: int = 0
+        # Shows a player message (P_SetMessage), e.g. for the follow-mode toggle.
+        self.on_message: Callable[[str], None] | None = None
+
         # Raw parchment lump
         self._autopage: bytes | None = None
         self._load_autopage()
@@ -237,31 +250,42 @@ class AutoMap:
                     self._autopage = None
 
     def start(self, level: Level, player: Player) -> None:
-        """Open the automap (AM_Start)."""
+        """Open the automap (AM_Start).
+
+        The scale is only reset for a new level (AM_LevelInit); zoom and follow mode
+        otherwise carry over between openings, as in vanilla.
+        """
         self.active = True
         self.f_w = FINIT_WIDTH
         self.f_h = VIRTUAL_HEIGHT if self.fullscreen_view else FINIT_HEIGHT
-        self._compute_level_bounds(level)
+        if level is not self._last_level:
+            self._level_init(level)
+            self._last_level = level
 
-        # Initial scale
-        self.scale_mtof = max(self.min_scale_mtof, int(self.min_scale_mtof / 0.7))
-        if self.scale_mtof > self.max_scale_mtof:
-            self.scale_mtof = self.min_scale_mtof
-        self.scale_ftom = fixed_div(FRACUNIT, self.scale_mtof)
-
-        # Center on player
+        # AM_initVariables: stop held keys and centre on the player.
+        self._pan_x = self._pan_y = 0
+        self._zoom_dir = 0
         self.m_w = fixed_mul(self.f_w << FRACBITS, self.scale_ftom)
         self.m_h = fixed_mul(self.f_h << FRACBITS, self.scale_ftom)
         px = player.mo.x if player.mo is not None else 0
         py = player.mo.y if player.mo is not None else 0
         self.m_x = px - self.m_w // 2
         self.m_y = py - self.m_h // 2
-        self.follow_player = True
+
+    def _level_init(self, level: Level) -> None:
+        """Port of AM_LevelInit (am_map.c): bounds and the initial scale for a level."""
+        self._compute_level_bounds(level)
+        self.scale_mtof = fixed_div(self.min_scale_mtof, int(0.7 * FRACUNIT))
+        if self.scale_mtof > self.max_scale_mtof:
+            self.scale_mtof = self.min_scale_mtof
+        self.scale_ftom = fixed_div(FRACUNIT, self.scale_mtof)
         self._is_max_zoom = False
 
     def stop(self) -> None:
         """Close the automap (AM_Stop)."""
         self.active = False
+        self._pan_x = self._pan_y = 0
+        self._zoom_dir = 0
 
     def toggle(self, level: Level, player: Player) -> None:
         """Toggle automap active state."""
@@ -292,7 +316,7 @@ class AutoMap:
             self.max_scale_mtof = self.min_scale_mtof * 10
 
     def tick(self, player: Player) -> None:
-        """Update window position and tracking per simulation tic (AM_Ticker)."""
+        """Port of AM_Ticker (am_map.c): follow the player, then apply held zoom and pan keys."""
         if not self.active:
             return
 
@@ -300,49 +324,85 @@ class AutoMap:
             self.m_x = player.mo.x - self.m_w // 2
             self.m_y = player.mo.y - self.m_h // 2
 
+        if self._zoom_dir:
+            self.zoom(self._zoom_dir)
+        if self._pan_x or self._pan_y:
+            self.pan(self._pan_x, self._pan_y)
+
     # -------------------------------------------------------------------------
     # Input Handling (AM_Responder)
     # -------------------------------------------------------------------------
 
+    _PAN_KEYS: dict[int, tuple[int, int]] = {
+        pygame.K_LEFT: (-F_PANINC, 0),
+        pygame.K_RIGHT: (F_PANINC, 0),
+        pygame.K_UP: (0, F_PANINC),
+        pygame.K_DOWN: (0, -F_PANINC),
+    }
+    _ZOOM_IN_KEYS: tuple[int, ...] = (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS)
+    _ZOOM_OUT_KEYS: tuple[int, ...] = (pygame.K_MINUS, pygame.K_KP_MINUS)
+
     def handle_key(self, key: int) -> bool:
-        """Handle keyboard input for automap navigation."""
+        """Port of AM_Responder (am_map.c) for a key press; True if the key was eaten.
+
+        Arrow keys pan only when follow mode is off; otherwise they fall through to
+        player movement, as in vanilla. Panning and zooming continue every tic while
+        the key is held (see `tick`). Escape is not handled here: it opens the menu.
+        """
         if not self.active:
             return False
 
-        if key in (pygame.K_TAB, pygame.K_ESCAPE):
+        pan = self._PAN_KEYS.get(key)
+        if pan is not None:
+            if self.follow_player:
+                return False
+            if pan[0]:
+                self._pan_x = pan[0]
+            if pan[1]:
+                self._pan_y = pan[1]
+            return True
+        if key in self._ZOOM_OUT_KEYS:
+            self._zoom_dir = -1
+            return True
+        if key in self._ZOOM_IN_KEYS:
+            self._zoom_dir = 1
+            return True
+        if key == pygame.K_TAB:
             self.stop()
             return True
-        elif key == pygame.K_f:
-            self.toggle_follow()
-            return True
-        elif key == pygame.K_g:
-            self.toggle_grid()
-            return True
-        elif key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
-            self.zoom(1)
-            return True
-        elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-            self.zoom(-1)
-            return True
-        elif key == pygame.K_0:
+        if key == pygame.K_0:
             self.toggle_max_zoom()
             return True
-        elif key == pygame.K_o:
+        if key == pygame.K_f:
+            self.toggle_follow()
+            if self.on_message is not None:
+                self.on_message(AMSTR_FOLLOWON if self.follow_player else AMSTR_FOLLOWOFF)
+            return True
+        # Not in vanilla Hexen: grid and transparent overlay toggles.
+        if key == pygame.K_g:
+            self.toggle_grid()
+            return True
+        if key == pygame.K_o:
             self.toggle_overlay()
             return True
-        elif key == pygame.K_LEFT:
-            self.pan(-F_PANINC, 0)
-            return True
-        elif key == pygame.K_RIGHT:
-            self.pan(F_PANINC, 0)
-            return True
-        elif key == pygame.K_UP:
-            self.pan(0, F_PANINC)
-            return True
-        elif key == pygame.K_DOWN:
-            self.pan(0, -F_PANINC)
-            return True
+        return False
 
+    def handle_key_up(self, key: int) -> bool:
+        """Port of the key-up half of AM_Responder: stop panning or zooming.
+
+        Always returns False, so the key release still reaches player input.
+        """
+        if not self.active:
+            return False
+        pan = self._PAN_KEYS.get(key)
+        if pan is not None:
+            if not self.follow_player:
+                if pan[0]:
+                    self._pan_x = 0
+                if pan[1]:
+                    self._pan_y = 0
+        elif key in self._ZOOM_IN_KEYS or key in self._ZOOM_OUT_KEYS:
+            self._zoom_dir = 0
         return False
 
     def handle_mouse_drag(self, dx: int, dy: int) -> None:
@@ -448,8 +508,12 @@ class AutoMap:
         level: Level,
         player: Player,
         actors: list[Mobj] | None = None,
+        map_name: str | None = None,
     ) -> None:
-        """Render the automap onto the 320x200 overlay canvas."""
+        """Render the automap onto the 320x200 overlay canvas (AM_Drawer).
+
+        `map_name` is the MAPINFO name (P_GetMapName); the lump name is used without it.
+        """
         if not self.active:
             return
 
@@ -472,7 +536,7 @@ class AutoMap:
             self._draw_things(overlay, actors)
 
         # 6. Map Name & World Timer
-        self._draw_overlay_text(overlay, level, player)
+        self._draw_overlay_text(overlay, map_name or level.name, player)
 
     def _draw_background(self, overlay: Overlay2D) -> None:
         """Draw parchment background (AM_clearFB)."""
@@ -661,11 +725,9 @@ class AutoMap:
                         THINGCOLORS,
                     )
 
-    def _draw_overlay_text(self, overlay: Overlay2D, level: Level, player: Player) -> None:
-        """Draw map name and world timer."""
-        # Map name at bottom-left
-        map_title = level.name
-        overlay.draw_text_a(map_title, 38, self.f_h - 10, yellow=True)
+    def _draw_overlay_text(self, overlay: Overlay2D, map_name: str, player: Player) -> None:
+        """Draw the map name (MN_DrTextA at 38,144 in AM_Drawer) and the world timer."""
+        overlay.draw_text_a(map_name, 38, 144)
 
         # World timer at top-right
         world_timer = getattr(player, "world_timer", 0)

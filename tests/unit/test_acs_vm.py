@@ -501,6 +501,8 @@ class TestACSGamePCodes:
         ]
         behavior = build_behavior({1: code}, strings=strings)
         sim = GameSim()
+        player = Player()
+        sim.players.append(player)  # players[consoleplayer] always exists in vanilla
         vm = ACSVM(behavior)
         sim.acs_vm = vm
 
@@ -515,6 +517,10 @@ class TestACSGamePCodes:
         assert messages[0].bold is False
         assert messages[1].text == " WORLD"
         assert messages[1].bold is True
+        # CmdEndPrintBold uses P_SetYellowMessage with ultmsg=true; it replaced the print.
+        assert player.message == " WORLD"
+        assert player.yellow_message is True
+        assert player.ultimate_message is True
 
     def test_sound_events(self) -> None:
         """Test PCD_AMBIENTSOUND, PCD_SECTORSOUND, PCD_THINGSOUND, PCD_SOUNDSEQUENCE."""

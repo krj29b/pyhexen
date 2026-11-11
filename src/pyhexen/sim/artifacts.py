@@ -24,7 +24,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, abs32, c_div, fixed_mul, to_uint32
 from pyhexen.sim.actions import action
 from pyhexen.sim.attacks import (
@@ -58,6 +57,7 @@ from pyhexen.sim.maputl import (
     path_traverse,
     point_on_line_side,
 )
+from pyhexen.sim.message import set_message, set_yellow_message
 from pyhexen.sim.mobj import (
     FLOAT_BOB_OFFSETS,
     Mobj,
@@ -254,21 +254,6 @@ def _start_sound(
     start_sound(sim, None if full_volume else actor, sid)
 
 
-def _set_player_message(
-    sim: GameSim,
-    player: Player,
-    message: str,
-    *,
-    yellow: bool = False,
-) -> None:
-    """Set hint message for a player and emit PrintMessage event."""
-    player.message = message
-    player.message_tics = 4 * 35
-    player.yellow_message = yellow
-    p_idx = sim.players.index(player) if (hasattr(sim, "players") and player in sim.players) else 0
-    sim.events.emit(PrintMessage(text=message, player_index=p_idx, bold=False))
-
-
 def active_minotaur(sim: GameSim, master: Player) -> Mobj | None:
     """Search active mobjs for an active minotaur bound to `master`.
 
@@ -454,11 +439,11 @@ def try_pickup_artifact(
             set_dormant_artifact(sim, artifact)
             _start_sound(sim, artifact, SfxEnum.SFX_PICKUP_ARTIFACT)
             if msg:
-                _set_player_message(sim, player, msg, yellow=False)
+                set_message(sim, player, msg, False)
         else:
             _start_sound(sim, player.mo, SfxEnum.SFX_PICKUP_ITEM)
             if msg:
-                _set_player_message(sim, player, msg, yellow=True)
+                set_message(sim, player, msg, True)  # puzzle item: ultimate
             if not sim.netgame or sim.deathmatch:
                 remove_mobj(sim, artifact)
 
@@ -1089,7 +1074,7 @@ def use_artifact(sim: GameSim, player: Player, arti: int) -> bool:
     if arti >= ArtiType.ARTI_FIRSTPUZZITEM:
         if use_puzzle_item(sim, player, arti - ArtiType.ARTI_FIRSTPUZZITEM):
             return True
-        _set_player_message(sim, player, "YOU CANNOT USE THIS HERE", yellow=False)
+        set_yellow_message(sim, player, "YOU CANNOT USE THIS HERE", False)
         return False
 
     return False
@@ -1138,25 +1123,25 @@ def touch_special_thing(sim: GameSim, special: Mobj, toucher: Mobj) -> None:
     if sp == SpriteNum.SPR_PTN1:
         if not give_body(player, 10):
             return
-        _set_player_message(sim, player, "CRYSTAL VIAL")
+        set_message(sim, player, "CRYSTAL VIAL", False)
 
     # Armor pickups
     elif sp == SpriteNum.SPR_ARM1:
         if not give_armor(player, ARMOR_ARMOR, -1):
             return
-        _set_player_message(sim, player, "MESH ARMOR")
+        set_message(sim, player, "MESH ARMOR", False)
     elif sp == SpriteNum.SPR_ARM2:
         if not give_armor(player, ARMOR_SHIELD, -1):
             return
-        _set_player_message(sim, player, "FALCON SHIELD")
+        set_message(sim, player, "FALCON SHIELD", False)
     elif sp == SpriteNum.SPR_ARM3:
         if not give_armor(player, ARMOR_HELMET, -1):
             return
-        _set_player_message(sim, player, "PLATINUM HELMET")
+        set_message(sim, player, "PLATINUM HELMET", False)
     elif sp == SpriteNum.SPR_ARM4:
         if not give_armor(player, ARMOR_AMULET, -1):
             return
-        _set_player_message(sim, player, "AMULET OF WARDING")
+        set_message(sim, player, "AMULET OF WARDING", False)
 
     # Keys
     elif SpriteNum.SPR_KEY1 <= sp <= SpriteNum.SPR_KEYB:
@@ -1165,7 +1150,7 @@ def touch_special_thing(sim: GameSim, special: Mobj, toucher: Mobj) -> None:
             return
         sound = SfxEnum.SFX_PICKUP_KEY
         if key_idx < len(TEXT_KEY_MESSAGES):
-            _set_player_message(sim, player, TEXT_KEY_MESSAGES[key_idx], yellow=True)
+            set_message(sim, player, TEXT_KEY_MESSAGES[key_idx], True)
         if special.special:
             execute_line_special(
                 sim,
@@ -1285,17 +1270,17 @@ def touch_special_thing(sim: GameSim, special: Mobj, toucher: Mobj) -> None:
     elif sp == SpriteNum.SPR_MAN1:
         if not give_mana(sim, player, MANA_1, 15):
             return
-        _set_player_message(sim, player, "BLUE MANA")
+        set_message(sim, player, "BLUE MANA", False)
     elif sp == SpriteNum.SPR_MAN2:
         if not give_mana(sim, player, MANA_2, 15):
             return
-        _set_player_message(sim, player, "GREEN MANA")
+        set_message(sim, player, "GREEN MANA", False)
     elif sp == SpriteNum.SPR_MAN3:
         g1 = give_mana(sim, player, MANA_1, 20)
         g2 = give_mana(sim, player, MANA_2, 20)
         if not (g1 or g2):
             return
-        _set_player_message(sim, player, "COMBINED MANA")
+        set_message(sim, player, "COMBINED MANA", False)
 
     # Weapons
     elif sp == SpriteNum.SPR_WMCS:

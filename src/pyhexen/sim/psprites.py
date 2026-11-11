@@ -27,7 +27,6 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, fixed_mul, to_int32, to_uint32
 from pyhexen.core.ticcmd import BT_ATTACK
 from pyhexen.sim.actions import ActionCallable, action, get_action
@@ -41,6 +40,7 @@ from pyhexen.sim.info_data import (
     State,
     StateNum,
 )
+from pyhexen.sim.message import set_message
 from pyhexen.sim.mobj import Mobj, remove_mobj, set_mobj_state
 from pyhexen.sim.sound import start_sound
 from pyhexen.sim.specials.dispatcher import execute_line_special
@@ -370,13 +370,6 @@ def _emit_sound(
     if sid <= 0:
         return
     start_sound(sim, None if (full_volume or actor is None) else actor, sid)
-
-
-def _set_player_message(sim: GameSim, player: Player, msg: str) -> None:
-    """Set player HUD message and emit PrintMessage event."""
-    player.message = msg
-    player.message_tics = 4 * 35
-    sim.events.emit(PrintMessage(text=msg, player_index=0, bold=False))
 
 
 def _invoke_psp_action(
@@ -792,7 +785,7 @@ def give_weapon(
             return False
 
     if message:
-        _set_player_message(sim, player, message)
+        set_message(sim, player, message, False)
 
     if weapon_mobj is not None:
         if weapon_mobj.special:
@@ -880,10 +873,10 @@ def give_weapon_piece(
 
     cls_idx = max(0, min(2, int(match_class)))
     if gave_weapon:
-        _set_player_message(sim, player, FOURTH_WEAPON_TEXT[cls_idx])
+        set_message(sim, player, FOURTH_WEAPON_TEXT[cls_idx], False)
         _emit_sound(sim, None, SfxEnum.SFX_WEAPON_BUILD, full_volume=True)
     else:
-        _set_player_message(sim, player, WEAPON_PIECE_TEXT[cls_idx])
+        set_message(sim, player, WEAPON_PIECE_TEXT[cls_idx], False)
         _emit_sound(sim, None, SfxEnum.SFX_PICKUP_WEAPON, full_volume=True)
 
     return True, gave_weapon

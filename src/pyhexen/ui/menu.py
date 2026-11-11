@@ -252,6 +252,9 @@ class MenuManager:
         self.on_end_game: Callable[[], None] | None = None
         self.on_suicide: Callable[[], None] | None = None
         self.on_sound: Callable[[str], None] | None = None
+        # Player message (P_SetMessage text, ultimate flag) and the messageson toggle.
+        self.on_message: Callable[[str, bool], None] | None = None
+        self.on_messages_toggled: Callable[[bool], None] | None = None
         self.on_config_changed: Callable[[Config], None] | None = on_config_changed
 
         # Build menus
@@ -801,14 +804,14 @@ class MenuManager:
                 else:
                     self.activate_menu()
                     self.set_menu(MenuType.SAVE)
+                    self._send_message("CHOOSE A QUICKSAVE SLOT", True)
                 return True
             if key == pygame.K_F7:  # End game
                 self.prompt_type = PromptType.END_GAME
                 self._play_sound(SFX_CHAT)
                 return True
             if key == pygame.K_F8:  # Messages toggle
-                self.messages_on = not self.messages_on
-                self._play_sound(SFX_CHAT)
+                self.toggle_messages()
                 return True
             if key == pygame.K_F9:  # Quickload
                 if self.quickload_slot >= 0:
@@ -817,6 +820,7 @@ class MenuManager:
                 else:
                     self.activate_menu()
                     self.set_menu(MenuType.LOAD)
+                    self._send_message("CHOOSE A QUICKLOAD SLOT", True)
                 return True
             if key == pygame.K_F10:  # Quit game
                 self.prompt_type = PromptType.QUIT
@@ -864,6 +868,18 @@ class MenuManager:
                     return True
 
         return False
+
+    def toggle_messages(self) -> None:
+        """Port of SCMessages (mn_menu.c): flip messageson and say so."""
+        self.messages_on = not self.messages_on
+        if self.on_messages_toggled is not None:
+            self.on_messages_toggled(self.messages_on)
+        self._send_message("MESSAGES ON" if self.messages_on else "MESSAGES OFF", True)
+        self._play_sound(SFX_CHAT)
+
+    def _send_message(self, text: str, ultimate: bool) -> None:
+        if self.on_message is not None:
+            self.on_message(text, ultimate)
 
     def _move_cursor(self, direction: int) -> None:
         """Move cursor up or down skipping empty items."""
@@ -943,8 +959,7 @@ class MenuManager:
                 self.active = False
                 self._play_sound(SFX_CHAT)
             elif pos == 1:  # MESSAGES
-                self.messages_on = not self.messages_on
-                self._play_sound(SFX_CHAT)
+                self.toggle_messages()
 
         elif menu_type == MenuType.VIDEO:
             if pos == 8:  # SAVE CONFIG

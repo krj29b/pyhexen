@@ -64,6 +64,8 @@ class GameSim:
         self.level_time: int = 0
         self.timer_game: int = 0
         self.paused: bool = False
+        # Vanilla `messageson` (a menu setting): non-ultimate messages are dropped when off.
+        self.messages_on: bool = True
 
         self.map_num: int = 1
         self.cluster: int = 1

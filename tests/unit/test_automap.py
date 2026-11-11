@@ -393,10 +393,18 @@ def test_keyboard_and_mouse_controls() -> None:
     automap.handle_key(pygame.K_o)
     assert automap.overlay_mode
 
-    # Arrow keys pan
+    # Arrow keys pan while held (follow mode is off now)
     orig_x = automap.m_x
-    automap.handle_key(pygame.K_RIGHT)
+    assert automap.handle_key(pygame.K_RIGHT)
+    automap.tick(plr)
     assert automap.m_x > orig_x
+    automap.handle_key_up(pygame.K_RIGHT)
+    held_x = automap.m_x
+    automap.tick(plr)
+    assert automap.m_x == held_x
+
+    # Escape is left for the menu
+    assert not automap.handle_key(pygame.K_ESCAPE)
 
     # Mouse drag
     automap.handle_mouse_drag(10, 0)

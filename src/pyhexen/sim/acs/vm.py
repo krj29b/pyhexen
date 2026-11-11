@@ -14,7 +14,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import c_div, c_mod
 from pyhexen.sim.acs.loader import (
     ACS_STACK_DEPTH,
@@ -27,6 +26,7 @@ from pyhexen.sim.acs.loader import (
 )
 from pyhexen.sim.acs.pcodes import PCode
 from pyhexen.sim.info_data import MobjFlag, MobjType
+from pyhexen.sim.message import set_message, set_yellow_message
 from pyhexen.sim.sound import start_sequence, start_sound
 from pyhexen.sim.specials.dispatcher import (
     execute_line_special,
@@ -830,12 +830,20 @@ class ACSVM:
             elif cmd == PCode.PCD_PRINTCHARACTER:
                 script.print_buffer.append(chr(pop() & 0xFF))
             elif cmd == PCode.PCD_ENDPRINT:
+                # CmdEndPrint: the activator's player, else the console player.
                 msg = "".join(script.print_buffer)
-                sim.events.emit(PrintMessage(text=msg, bold=False))
+                act = script.activator
+                target = act.player if act is not None and act.player is not None else None
+                if target is None and sim.players:
+                    target = sim.players[0]
+                if target is not None:
+                    set_message(sim, target, msg, True)
                 script.print_buffer.clear()
             elif cmd == PCode.PCD_ENDPRINTBOLD:
+                # CmdEndPrintBold: every player in the game.
                 msg = "".join(script.print_buffer)
-                sim.events.emit(PrintMessage(text=msg, bold=True))
+                for p in sim.players:
+                    set_yellow_message(sim, p, msg, True)
                 script.print_buffer.clear()
             elif cmd == PCode.PCD_PLAYERCOUNT:
                 alive_players = len([p for p in sim.players if p.mo and p.mo.health > 0])

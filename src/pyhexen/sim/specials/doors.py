@@ -12,9 +12,10 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.events import PrintMessage
 from pyhexen.core.fixed import FRACUNIT
-from pyhexen.sim.sound import start_door_sequence, stop_sequence
+from pyhexen.sim.info_data import SfxEnum
+from pyhexen.sim.message import set_message
+from pyhexen.sim.sound import start_door_sequence, start_sound, stop_sequence
 from pyhexen.sim.specials.dispatcher import (
     find_lowest_ceiling_surrounding,
     find_sectors_from_tag,
@@ -200,14 +201,26 @@ def special_door_raise(
     )
 
 
+def checked_locked_door(sim: GameSim, mo: Any, lock: int) -> bool:
+    """Port of CheckedLockedDoor (p_spec.c); also the lock check in ACS_LockedExecute."""
+    if mo is None or mo.player is None:
+        return False
+    if not lock:
+        return True
+    if not (mo.player.keys & (1 << (lock - 1))):
+        key_name = KEY_NAMES[lock - 1] if lock - 1 < len(KEY_NAMES) else f"KEY {lock}"
+        set_message(sim, mo.player, f"YOU NEED THE {key_name}\n", True)
+        start_sound(sim, mo, int(SfxEnum.SFX_DOOR_LOCKED))
+        return False
+    return True
+
+
 def special_door_locked_raise(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
     tag, speed_byte, wait_tics, key = args[0], args[1], args[2], args[3]
-    if mo is not None and mo.player is not None:
-        if key > 0 and not (mo.player.keys & (1 << (key - 1))):
-            sim.events.emit(PrintMessage("YOU NEED A KEY TO OPEN THIS DOOR", bold=True))
-            return False
+    if not checked_locked_door(sim, mo, key):
+        return False
     wait = wait_tics if wait_tics > 0 else VDOORWAIT
     return ev_do_door(
         sim, line, DoorType.DREV_NORMAL, (speed_byte * FRACUNIT) >> 3, tag, topwait=wait

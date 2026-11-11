@@ -17,12 +17,11 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.core.angles import ANG90
-from pyhexen.core.events import PrintMessage, SectorChanged
+from pyhexen.core.events import SectorChanged
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, MAXINT
-from pyhexen.sim.info_data import MobjFlag2, SfxEnum
+from pyhexen.sim.info_data import MobjFlag2
 from pyhexen.sim.mobj import Mobj, remove_mobj
 from pyhexen.sim.movement import thrust_mobj
-from pyhexen.sim.sound import start_sound
 from pyhexen.world.level import ML_TWOSIDED, Level, Line, Sector
 
 if TYPE_CHECKING:
@@ -699,18 +698,11 @@ def _ev_acs_locked_execute(
     mo: Mobj | None,
     side: int = 0,
 ) -> bool:
-    from pyhexen.sim.specials.doors import KEY_NAMES
+    from pyhexen.sim.specials.doors import checked_locked_door
 
     script_num, target_map, arg1, arg2, lock = args
-    if mo is None or mo.player is None:
+    if not checked_locked_door(sim, mo, lock):
         return False
-    if lock != 0:
-        key_bit = 1 << (lock - 1)
-        if not (mo.player.keys & key_bit):
-            key_name = KEY_NAMES[lock - 1] if 0 <= lock - 1 < len(KEY_NAMES) else f"KEY {lock}"
-            sim.events.emit(PrintMessage(text=f"YOU NEED THE {key_name}\n", bold=True))
-            start_sound(sim, mo, int(SfxEnum.SFX_DOOR_LOCKED))
-            return False
     if target_map != 0 and target_map != getattr(sim, "map_num", 1):
         return sim.acs_store.queue_script(target_map, script_num, (arg1, arg2, 0))
     if sim.acs_vm is None:

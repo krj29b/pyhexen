@@ -229,6 +229,45 @@ class SaveGameManager:
 
         return dest_path
 
+    def read_game(
+        self,
+        slot: int,
+        expected_checksum: str | None = None,
+        *,
+        validate_checksum: bool = True,
+    ) -> dict[str, Any]:
+        """Read and validate a save slot; return its payload (`header`, `sim`, `hub`).
+
+        Raises FileNotFoundError, SaveError, SaveVersionError or SaveChecksumError.
+        """
+        path = self.get_slot_path(slot)
+        if not path.is_file():
+            raise FileNotFoundError(f"Save slot file {path} does not exist")
+
+        try:
+            with gzip.open(path, "rb") as f:
+                decompressed = f.read()
+            payload = json.loads(decompressed.decode("utf-8"))
+        except (OSError, EOFError, ValueError) as exc:
+            raise SaveError(f"Save slot {slot} is unreadable: {exc}") from exc
+        if not isinstance(payload, dict) or "sim" not in payload:
+            raise SaveError("File is not a valid PyHexen save game")
+        header = payload.get("header", {})
+
+        if header.get("magic") != SAVE_MAGIC:
+            raise SaveError("File is not a valid PyHexen save game")
+        if header.get("version") != SAVE_VERSION:
+            raise SaveVersionError(
+                f"Incompatible save version {header.get('version')}; expected {SAVE_VERSION}"
+            )
+        chk = expected_checksum if expected_checksum is not None else self.iwad_checksum
+        saved_chk = header.get("iwad_checksum", "")
+        if validate_checksum and chk and saved_chk and chk != saved_chk:
+            raise SaveChecksumError(
+                f"IWAD checksum mismatch: saved with {saved_chk[:8]}..., current is {chk[:8]}..."
+            )
+        return payload
+
     def load_game(
         self,
         slot: int,
@@ -242,47 +281,22 @@ class SaveGameManager:
 
         Port of SV_LoadGame (sv_save.c:2069).
         """
-        path = self.get_slot_path(slot)
-        if not path.is_file():
-            raise FileNotFoundError(f"Save slot file {path} does not exist")
+        payload = self.read_game(slot, expected_checksum, validate_checksum=validate_checksum)
+        header = payload["header"]
 
-        with gzip.open(path, "rb") as f:
-            decompressed = f.read()
-
-        payload = json.loads(decompressed.decode("utf-8"))
-        header = payload.get("header", {})
-
-        # 1. Magic check
-        if header.get("magic") != SAVE_MAGIC:
-            raise SaveError("File is not a valid PyHexen save game")
-
-        # 2. Version check
-        if header.get("version") != SAVE_VERSION:
-            raise SaveVersionError(
-                f"Incompatible save version {header.get('version')}; expected {SAVE_VERSION}"
-            )
-
-        # 3. IWAD checksum validation
-        chk = expected_checksum if expected_checksum is not None else self.iwad_checksum
-        saved_chk = header.get("iwad_checksum", "")
-        if validate_checksum and chk and saved_chk and chk != saved_chk:
-            raise SaveChecksumError(
-                f"IWAD checksum mismatch: saved with {saved_chk[:8]}..., current is {chk[:8]}..."
-            )
-
-        # 4. Level loading if needed
+        # Level loading if needed
         target_map = header.get("map_num", 1)
         if load_level_cb is not None and (
             sim.level is None or getattr(sim, "map_num", 0) != target_map
         ):
             sim.level = load_level_cb(target_map)
 
-        # 5. Restore simulation
+        # Restore simulation
         sim.from_state(payload["sim"])
         sim.map_num = target_map
         sim.cluster = header.get("cluster", 1)
 
-        # 6. Restore HubManager
+        # Restore HubManager
         active_hub = hub if hub is not None else HubManager()
         hub_data = payload.get("hub", {})
         active_hub.current_cluster = hub_data.get("current_cluster", sim.cluster)

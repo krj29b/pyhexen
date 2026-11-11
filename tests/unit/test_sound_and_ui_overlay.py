@@ -15,16 +15,12 @@ import moderngl
 import numpy as np
 from tests.fixtures.wadbuilder import WadBuilder
 
-from pyhexen.core.events import EventBus, PrintMessage
 from pyhexen.render.overlay2d import (
-    VIRTUAL_HEIGHT,
-    VIRTUAL_WIDTH,
     Overlay2D,
     compute_4_3_viewport,
 )
 from pyhexen.render.textures import GpuTextureManager
 from pyhexen.ui.fonts import FONT_A_NUM_GLYPHS, BitmapFont, FontSet
-from pyhexen.ui.messages import MESSAGE_TICS, YELLOW_MESSAGE_Y, MessageSystem
 from pyhexen.wad.picture import Picture
 from pyhexen.wad.wadfile import WadFile
 
@@ -107,46 +103,3 @@ def test_bitmap_font_and_overlay2d_cpu_and_gpu() -> None:
     overlay.release_gpu()
     fbo.release()
     ctx.release()
-
-
-def test_message_system_events_expiration_and_drawing() -> None:
-    bus = EventBus()
-    msg_sys = MessageSystem(bus)
-    overlay = Overlay2D(fonts=FontSet.synthetic())
-
-    # Emit normal pickup message
-    bus.emit(PrintMessage(text="GREETINGS MORTAL", bold=False))
-    assert msg_sys.text == "GREETINGS MORTAL"
-    assert msg_sys.tics == MESSAGE_TICS
-
-    # Emit bold/yellow ACS message with multi-line text
-    bus.emit(PrintMessage(text="ONE HALF OF THE PUZZLE\nIS COMPLETE", bold=True))
-    assert msg_sys.yellow_text == "ONE HALF OF THE PUZZLE\nIS COMPLETE"
-    assert msg_sys.yellow_tics == MESSAGE_TICS
-
-    # Draw onto Overlay2D and verify pixels are written both at top-left and around y=68
-    overlay.clear()
-    msg_sys.draw(overlay)
-    assert np.any(overlay.mask[1:10, 1:120])
-    assert np.any(overlay.mask[YELLOW_MESSAGE_Y : YELLOW_MESSAGE_Y + 18, 60:260])
-
-    # Advance 139 tics -> still active with 1 tic remaining
-    for _ in range(MESSAGE_TICS - 1):
-        msg_sys.tick()
-    assert msg_sys.tics == 1
-    assert msg_sys.yellow_tics == 1
-    assert msg_sys.text != ""
-    assert msg_sys.yellow_text != ""
-
-    # 140th tic -> both expire
-    msg_sys.tick()
-    assert msg_sys.tics == 0
-    assert msg_sys.yellow_tics == 0
-    assert msg_sys.text == ""
-    assert msg_sys.yellow_text == ""
-
-    # After expiration, drawing leaves overlay empty
-    overlay.clear()
-    msg_sys.draw(overlay)
-    assert not np.any(overlay.mask)
-    assert overlay.indices.shape == (VIRTUAL_HEIGHT, VIRTUAL_WIDTH)

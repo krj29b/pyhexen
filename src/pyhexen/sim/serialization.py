@@ -14,6 +14,7 @@ import gzip
 import json
 from typing import TYPE_CHECKING, Any
 
+from pyhexen.core.fixed import FRACBITS, fixed_div
 from pyhexen.sim.acs.loader import ACScriptState
 from pyhexen.sim.acs.vm import RunningScript
 from pyhexen.sim.mobj import Mobj, set_thing_position
@@ -28,7 +29,7 @@ from pyhexen.sim.polyobj import (
 from pyhexen.sim.specials.ceilings import CeilingMove
 from pyhexen.sim.specials.doors import DoorType, VerticalDoor
 from pyhexen.sim.specials.floors import FloorMove, FloorWaggle
-from pyhexen.sim.specials.lights import LightFade, LightGlow
+from pyhexen.sim.specials.lights import Light, LightType
 from pyhexen.sim.specials.pillars import Pillar
 from pyhexen.sim.specials.plats import Plat
 from pyhexen.sim.specials.scroll import ScrollThinker
@@ -365,27 +366,39 @@ def _restore_special_thinker(
             sec.special_data = pil
             return pil
 
+    elif t_type == "Light":
+        sec_idx = entry.get("sector_index", -1)
+        if 0 <= sec_idx < len(sim.level.sectors):
+            return Light.from_state(sim.level.sectors[sec_idx], entry)
+
     elif t_type == "LightFade":
+        # Saves from before T15.4 (float fader): continue as a vanilla fade.
         sec_idx = entry.get("sector_index", -1)
         if 0 <= sec_idx < len(sim.level.sectors):
             sec = sim.level.sectors[sec_idx]
-            lf = LightFade(sec, entry.get("target", 0), entry.get("tics", 1))
-            lf.step = entry.get("step", 0.0)
-            lf.current = entry.get("current", 0.0)
-            return lf
+            target = int(entry.get("target", 0))
+            tics = max(1, int(entry.get("tics", 1)))
+            return Light(
+                sec,
+                LightType.LITE_FADE,
+                value1=target,
+                value2=fixed_div((target - sec.light_level) << FRACBITS, tics << FRACBITS),
+                tics2=1 if sec.light_level <= target else -1,
+            )
 
     elif t_type == "LightGlow":
+        # Saves from before T15.4: a glow moving `speed` levels per tic.
         sec_idx = entry.get("sector_index", -1)
         if 0 <= sec_idx < len(sim.level.sectors):
-            sec = sim.level.sectors[sec_idx]
-            lg = LightGlow(
-                sec,
-                entry.get("min_light", 0),
-                entry.get("max_light", 0),
-                entry.get("speed", 2),
+            direction = 1 if int(entry.get("direction", 1)) >= 0 else -1
+            return Light(
+                sim.level.sectors[sec_idx],
+                LightType.LITE_GLOW,
+                value1=int(entry.get("max_light", 0)),
+                value2=int(entry.get("min_light", 0)),
+                tics1=direction * (int(entry.get("speed", 2)) << FRACBITS),
+                tics2=direction,
             )
-            lg.direction = entry.get("direction", 1)
-            return lg
 
     elif t_type == "PhasedLightThinker":
         sec_idx = entry.get("sector_index", -1)

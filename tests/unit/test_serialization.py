@@ -18,7 +18,7 @@ from pyhexen.sim.player import PlayerClass, spawn_player
 from pyhexen.sim.polyobj import ev_rotate_poly, get_polyobj
 from pyhexen.sim.specials.doors import DoorType, VerticalDoor
 from pyhexen.sim.specials.floors import FloorMove, FloorWaggle
-from pyhexen.sim.specials.lights import LightFade, LightGlow
+from pyhexen.sim.specials.lights import Light, LightType
 from pyhexen.sim.specials.pillars import Pillar
 from pyhexen.sim.specials.plats import Plat
 from pyhexen.sim.specials.scroll import ScrollThinker
@@ -227,13 +227,10 @@ def test_special_movers_serialization() -> None:
     sim.thinkers.add(pil)
 
     # Add lights
-    lf = LightFade(sec, target=120, tics=35)
-    lf.step = 1.5
-    lf.current = 160.0
+    lf = Light(sec, LightType.LITE_FADE, value1=120, value2=-74898, tics2=-1)
     sim.thinkers.add(lf)
 
-    lg = LightGlow(sec, min_light=32, max_light=220, speed=4)
-    lg.direction = -1
+    lg = Light(sec, LightType.LITE_STROBE, value1=220, value2=32, tics1=4, tics2=8, count=3)
     sim.thinkers.add(lg)
 
     plt = PhasedLightThinker(sec, base=64, index=3)
@@ -259,8 +256,8 @@ def test_special_movers_serialization() -> None:
     assert "FloorWaggle" in types
     assert "Plat" in types
     assert "Pillar" in types
-    assert "LightFade" in types
-    assert "LightGlow" in types
+    lights = [t.state_tuple() for t in sim2.thinkers if isinstance(t, Light)]
+    assert lights == [lf.state_tuple(), lg.state_tuple()]
     assert "PhasedLightThinker" in types
     assert "ButtonThinker" in types
     assert "ScrollThinker" in types

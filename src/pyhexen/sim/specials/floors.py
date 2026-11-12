@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.fixed import FRACUNIT
+from pyhexen.core.fixed import FRACBITS, FRACUNIT, c_div, fixed_mul, to_int32
 from pyhexen.sim.mobj import FLOAT_BOB_OFFSETS
 from pyhexen.sim.sound import start_platform_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import (
@@ -43,68 +43,42 @@ def t_move_plane(
 ) -> MoveResult:
     """Port of T_MovePlane (p_floor.c).
 
-    Moves a floor (0) or ceiling (1) toward `dest` at `speed`.
+    Moves a floor (0) or ceiling (1) toward `dest` at `speed`, rechecking nearby things
+    with P_ChangeSector. `crush` is the damage dealt every 4 tics to things that no
+    longer fit (0: none). When things don't fit the plane goes back; a normal step then
+    reports RES_CRUSHED (a rising ceiling never does). Reaching `dest` reports
+    RES_PASTDEST, only when the step would go past it.
     """
-    flag = False
-    if floor_or_ceiling == 0:  # Floor
-        if direction == 1:  # UP
-            new_height = sector.floor_height + speed
-            if new_height >= dest:
-                new_height = dest
-                flag = True
-        else:  # DOWN
-            new_height = sector.floor_height - speed
-            if new_height <= dest:
-                new_height = dest
-                flag = True
+    from pyhexen.sim.map import change_sector
 
-        old_height = sector.floor_height
-        sector.floor_height = new_height
+    is_floor = floor_or_ceiling == 0
+    lastpos = sector.floor_height if is_floor else sector.ceiling_height
+
+    def set_height(height: int) -> None:
+        if is_floor:
+            sector.floor_height = height
+        else:
+            sector.ceiling_height = height
+
+    if direction == -1:
+        past = lastpos - speed < dest
+        target = dest if past else lastpos - speed
+    else:
+        past = lastpos + speed > dest
+        target = dest if past else lastpos + speed
+
+    result = MoveResult.RES_PASTDEST if past else MoveResult.RES_OK
+    set_height(target)
+    if change_sector(sim, sector, crush):
+        # A rising ceiling keeps going even if something doesn't fit (#if 0 in vanilla).
+        if past or is_floor or direction == -1:
+            set_height(lastpos)
+            change_sector(sim, sector, crush)
+            if not past:
+                result = MoveResult.RES_CRUSHED
+    if (sector.floor_height if is_floor else sector.ceiling_height) != lastpos:
         notify_sector_changed(sim, sector)
-
-        # Adjust things in the sector
-        mo = sector.thing_list
-        while mo is not None:
-            next_mo = mo.snext
-            if mo.z == old_height or mo.z < new_height:
-                mo.z = new_height
-                if mo.player is not None:
-                    mo.player.viewz = mo.z + mo.player.viewheight
-            mo = next_mo
-
-        if flag:
-            return MoveResult.RES_PASTDEST
-        return MoveResult.RES_OK
-
-    else:  # Ceiling
-        if direction == 1:  # UP
-            new_height = sector.ceiling_height + speed
-            if new_height >= dest:
-                new_height = dest
-                flag = True
-        else:  # DOWN
-            new_height = sector.ceiling_height - speed
-            if new_height <= dest:
-                new_height = dest
-                flag = True
-
-        sector.ceiling_height = new_height
-        notify_sector_changed(sim, sector)
-
-        # Check crushing
-        if direction == -1:
-            mo = sector.thing_list
-            while mo is not None:
-                next_mo = mo.snext
-                if mo.z + mo.height > new_height:
-                    if crush:
-                        mo.health = max(0, mo.health - 10)
-                        return MoveResult.RES_CRUSHED
-                mo = next_mo
-
-        if flag:
-            return MoveResult.RES_PASTDEST
-        return MoveResult.RES_OK
+    return result
 
 
 class FloorMove(Thinker):
@@ -163,48 +137,127 @@ class FloorMove(Thinker):
         }
 
 
+WGLSTATE_EXPAND = 1
+WGLSTATE_STABLE = 2
+WGLSTATE_REDUCE = 3
+
+
 class FloorWaggle(Thinker):
-    """Port of T_FloorWaggle (p_floor.c)."""
+    """Port of floorWaggle_t and T_FloorWaggle (p_floor.c).
+
+    The floor bobs around `original_height` by FloatBobOffsets scaled by `scale`,
+    which grows to `target_scale`, holds for `ticker` tics (-1: forever), then shrinks
+    back to zero, when the floor is restored and the thinker removed.
+    """
 
     def __init__(
         self,
         sector: Sector,
         original_height: int,
-        amplitude: int,
-        frequency: int,
+        accumulator: int = 0,
+        acc_delta: int = 0,
+        target_scale: int = 0,
+        scale_delta: int = 0,
+        ticker: int = -1,
     ) -> None:
         super().__init__()
         self.sector = sector
         self.original_height = original_height
-        self.amplitude = amplitude
-        self.frequency = frequency
-        self.accumulator = 0
+        self.accumulator = accumulator
+        self.acc_delta = acc_delta
+        self.scale = 0
+        self.target_scale = target_scale
+        self.scale_delta = scale_delta
+        self.ticker = ticker
+        self.state = WGLSTATE_EXPAND
 
     def tick(self, sim: GameSim) -> None:
-        self.accumulator = (self.accumulator + self.frequency) & 63
-        offset = (FLOAT_BOB_OFFSETS[self.accumulator] * self.amplitude) >> 6
-        self.sector.floor_height = self.original_height + offset
+        from pyhexen.sim.map import change_sector
+
+        if self.state == WGLSTATE_EXPAND:
+            self.scale += self.scale_delta
+            if self.scale >= self.target_scale:
+                self.scale = self.target_scale
+                self.state = WGLSTATE_STABLE
+        elif self.state == WGLSTATE_REDUCE:
+            self.scale -= self.scale_delta
+            if self.scale <= 0:  # Remove
+                self.sector.floor_height = self.original_height
+                change_sector(sim, self.sector, 1)
+                notify_sector_changed(sim, self.sector)
+                self.sector.special_data = None
+                sim.tag_finished(self.sector.tag)
+                self.removed = True
+                return
+        elif self.state == WGLSTATE_STABLE:
+            if self.ticker != -1:
+                self.ticker -= 1
+                if self.ticker == 0:
+                    self.state = WGLSTATE_REDUCE
+
+        self.accumulator = to_int32(self.accumulator + self.acc_delta)
+        self.sector.floor_height = self.original_height + fixed_mul(
+            FLOAT_BOB_OFFSETS[(self.accumulator >> FRACBITS) & 63], self.scale
+        )
+        change_sector(sim, self.sector, 1)  # P_ChangeSector(sector, true)
         notify_sector_changed(sim, self.sector)
+
+    _FIELDS = (
+        "original_height",
+        "accumulator",
+        "acc_delta",
+        "scale",
+        "target_scale",
+        "scale_delta",
+        "ticker",
+        "state",
+    )
 
     def state_tuple(self) -> tuple[Any, ...]:
         return (
             "FloorWaggle",
             self.sector.index if self.sector is not None else -1,
-            self.original_height,
-            self.amplitude,
-            self.frequency,
-            self.accumulator,
+            *(getattr(self, f) for f in self._FIELDS),
         )
 
     def to_state(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "type": "FloorWaggle",
             "sector_index": self.sector.index if self.sector is not None else -1,
-            "original_height": self.original_height,
-            "amplitude": self.amplitude,
-            "frequency": self.frequency,
-            "accumulator": self.accumulator,
         }
+        data.update({f: getattr(self, f) for f in self._FIELDS})
+        return data
+
+    def load_fields(self, entry: dict[str, Any]) -> None:
+        """Restore the fields written by `to_state`."""
+        for f in self._FIELDS:
+            if f in entry:
+                setattr(self, f, int(entry[f]))
+
+
+def ev_start_floor_waggle(
+    sim: GameSim, tag: int, height: int, speed: int, offset: int, timer: int
+) -> bool:
+    """Port of EV_StartFloorWaggle (p_floor.c)."""
+    assert sim.level is not None
+    started = False
+    for sector in find_sectors_from_tag(sim.level, tag):
+        if sector.special_data is not None:
+            continue  # Already busy with another thinker
+        started = True
+        target_scale = height << 10
+        waggle = FloorWaggle(
+            sector,
+            sector.floor_height,
+            accumulator=offset * FRACUNIT,
+            acc_delta=speed << 10,
+            target_scale=target_scale,
+            scale_delta=c_div(target_scale, 35 + c_div((3 * 35) * height, 255)),
+            ticker=timer * 35 if timer else -1,
+        )
+        sector.special_data = waggle
+        sim.thinkers.add(waggle)
+    return started
 
 
 def ev_do_floor(
@@ -248,16 +301,8 @@ def special_floor_raise_by_value(
 def special_floor_waggle(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
-    # args: [tag, amp, freq, offset, time]
-    tag, amp, freq = args[0], args[1], args[2]
-    assert sim.level is not None
-    sectors = find_sectors_from_tag(sim.level, tag)
-    if not sectors:
-        return False
-    for sec in sectors:
-        waggle = FloorWaggle(sec, sec.floor_height, amp * FRACUNIT, max(1, freq))
-        sim.thinkers.add(waggle)
-    return True
+    """Floor_Waggle (138): args tag, height, speed, offset, timer."""
+    return ev_start_floor_waggle(sim, args[0], args[1], args[2], args[3], args[4])
 
 
 SPECIAL_HANDLERS: dict[int, Any] = {

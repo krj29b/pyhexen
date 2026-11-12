@@ -182,10 +182,9 @@ def notify_sector_changed(sim: GameSim, sector: Sector) -> None:
 def find_sectors_from_tag(level: Level, tag: int) -> list[Sector]:
     """Return all sectors in `level` whose `tag == tag`.
 
-    Port of P_FindSectorFromTag (p_spec.c).
+    Port of P_FindSectorFromTag (p_spec.c). Like vanilla, tag 0 matches every untagged
+    sector; specials that treat tag 0 specially check it before calling this.
     """
-    if tag == 0:
-        return []
     return [sec for sec in level.sectors if sec.tag == tag]
 
 

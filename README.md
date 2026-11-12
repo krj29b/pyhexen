@@ -44,6 +44,7 @@ Verification work in progress:
 |---|---|
 | Simulation (monsters, weapons, specials, ACS, polyobjects, hubs) | All 226 action functions ported; being checked against the reference tic by tic |
 | Vanilla demo sync (DEMO1–3) | Measured against Chocolate Hexen: in sync for 419 / 2 / 170 tics so far (see [Demos](#demos-and-determinism)) |
+| Line specials | 35 of vanilla's 81 do nothing yet, including stairs, some crushers and plats, and Thing_Spawn (task T15.8) |
 | Full playthrough per class (Milestone M6) | Not yet done (task T15.7) |
 | Animated textures, sky scrolling, lightning on screen | Simulated, but the renderer doesn't show them yet (task T15.6d) |
 

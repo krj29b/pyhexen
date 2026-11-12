@@ -54,8 +54,10 @@ static void PYH_TraceTic(void)
     mobj_t *mo;
     mobj_t *pmo;
     unsigned int h = 0;
+    unsigned int sh = 0;
     int count = 0;
     int dump;
+    int i;
 
     if (!pyh_trace_init)
     {
@@ -102,12 +104,26 @@ static void PYH_TraceTic(void)
         }
     }
 
+    // Sector hash over floor, ceiling and light level, in sector order.
+    for (i = 0; i < numsectors; i++)
+    {
+        sh = (sh * 1000003u)
+            ^ ((unsigned int) sectors[i].floorheight
+               + 3u * (unsigned int) sectors[i].ceilingheight
+               + 7u * (unsigned int) sectors[i].lightlevel);
+        if (dump)
+        {
+            fprintf(pyh_trace_file, "S %d %d %d %d\n", i, sectors[i].floorheight,
+                    sectors[i].ceilingheight, sectors[i].lightlevel);
+        }
+    }
+
     pmo = players[0].mo;
-    fprintf(pyh_trace_file, "T %d %d %d %d %d %u %d %d %d %d %d %08x\n",
+    fprintf(pyh_trace_file, "T %d %d %d %d %d %u %d %d %d %d %d %08x %08x\n",
             leveltime, prndindex,
             pmo ? pmo->x : 0, pmo ? pmo->y : 0, pmo ? pmo->z : 0,
             pmo ? (unsigned int) pmo->angle : 0u,
             pmo ? pmo->momx : 0, pmo ? pmo->momy : 0, pmo ? pmo->momz : 0,
-            players[0].health, count, h);
+            players[0].health, count, h, sh);
     fflush(pyh_trace_file);
 }

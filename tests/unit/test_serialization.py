@@ -206,8 +206,9 @@ def test_special_movers_serialization() -> None:
     sim.thinkers.add(fm)
 
     # Add floor waggle
-    fw = FloorWaggle(sec, original_height=0, amplitude=16 * FRACUNIT, frequency=8)
+    fw = FloorWaggle(sec, original_height=0, acc_delta=8 << 10, target_scale=16 << 10)
     fw.accumulator = 1234
+    fw.state = 2
     sim.thinkers.add(fw)
 
     # Add plat
@@ -269,6 +270,7 @@ def test_special_movers_serialization() -> None:
 
     restored_fw = next(t for t in sim2.thinkers if isinstance(t, FloorWaggle))
     assert restored_fw.accumulator == 1234
+    assert (restored_fw.state, restored_fw.target_scale) == (2, 16 << 10)
 
     restored_plat = next(t for t in sim2.thinkers if isinstance(t, Plat))
     assert restored_plat.count == 42

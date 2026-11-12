@@ -17,7 +17,7 @@ from pyhexen.core.events import SequenceEvent
 from pyhexen.core.fixed import FRACUNIT
 from pyhexen.sim.info_data import SfxEnum
 from pyhexen.sim.sound import SEQ_DOOR_STONE, start_sound
-from pyhexen.sim.specials.doors import DoorType, ev_do_door
+from pyhexen.sim.specials.doors import ev_vertical_door
 from pyhexen.sim.specials.plats import special_plat_down_wait_up_stay
 from pyhexen.wad.mapinfo import MapInfo, MapInfoTable
 from pyhexen.wad.wadfile import WadStack
@@ -138,7 +138,8 @@ def test_door_sequence_plays_start_and_stop_sounds() -> None:
     seqs: list[SequenceEvent] = []
     sim.events.subscribe(SequenceEvent, seqs.append)
 
-    assert ev_do_door(sim, line, DoorType.DREV_OPEN, speed=8 * FRACUNIT)
+    line.args = (0, 64, 0, 0, 0)  # Door_Raise speed 64 (8 units per tic)
+    assert ev_vertical_door(sim, line, None)
     _tick(flow, audio)
     assert [(e.sequence, e.stop) for e in seqs] == [(SEQ_DOOR_STONE, False)]
     assert "DOROPN" in mixer.played  # SN_UpdateActiveSequences played the start sound

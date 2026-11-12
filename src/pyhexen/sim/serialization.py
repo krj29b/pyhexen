@@ -308,13 +308,8 @@ def _restore_special_thinker(
         sec_idx = entry.get("sector_index", -1)
         if 0 <= sec_idx < len(sim.level.sectors):
             sec = sim.level.sectors[sec_idx]
-            fw = FloorWaggle(
-                sec,
-                entry.get("original_height", 0),
-                entry.get("amplitude", 0),
-                entry.get("frequency", 0),
-            )
-            fw.accumulator = entry.get("accumulator", 0)
+            fw = FloorWaggle(sec, entry.get("original_height", 0))
+            fw.load_fields(entry)
             sec.special_data = fw
             return fw
 

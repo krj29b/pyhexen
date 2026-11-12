@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.fixed import FRACUNIT
+from pyhexen.core.fixed import FRACUNIT, c_div
 from pyhexen.sim.info_data import SfxEnum
 from pyhexen.sim.message import set_message
 from pyhexen.sim.sound import start_door_sequence, start_sound, stop_sequence
@@ -77,52 +77,47 @@ class VerticalDoor(Thinker):
             self.direction = 1
 
     def tick(self, sim: GameSim) -> None:
-        if self.direction == 1:  # UP
-            res = t_move_plane(
-                sim,
-                self.sector,
-                self.speed,
-                self.topheight,
-                crush=0,
-                floor_or_ceiling=1,
-                direction=1,
-            )
-            if res == MoveResult.RES_PASTDEST:
-                stop_sequence(sim, self.sector)
-                if self.type == DoorType.DREV_OPEN:
-                    self.removed = True
-                    if self.sector is not None:
-                        self.sector.special_data = None
-                        sim.tag_finished(self.sector.tag)
-                else:
-                    self.direction = 0
-                    self.topcountdown = self.topwait
-
+        """Port of T_VerticalDoor (p_doors.c)."""
+        if self.direction == 0:  # WAITING
+            self.topcountdown -= 1
+            if self.topcountdown == 0:
+                if self.type == DoorType.DREV_NORMAL:
+                    self.direction = -1  # time to go back down
+                    start_door_sequence(sim, self.sector)
+                elif self.type == DoorType.DREV_CLOSE30THENOPEN:
+                    self.direction = 1
+        elif self.direction == 2:  # INITIAL WAIT
+            self.topcountdown -= 1
+            if self.topcountdown == 0 and self.type == DoorType.DREV_RAISEIN5MINS:
+                self.direction = 1
+                self.type = DoorType.DREV_NORMAL
         elif self.direction == -1:  # DOWN
             res = t_move_plane(
-                sim,
-                self.sector,
-                self.speed,
-                self.sector.floor_height,
-                crush=0,
-                floor_or_ceiling=1,
-                direction=-1,
+                sim, self.sector, self.speed, self.sector.floor_height, 0, 1, self.direction
             )
             if res == MoveResult.RES_PASTDEST:
                 stop_sequence(sim, self.sector)
-                self.removed = True
-                if self.sector is not None:
-                    self.sector.special_data = None
-                    sim.tag_finished(self.sector.tag)
-            elif res == MoveResult.RES_CRUSHED:
-                # Bounce back open on obstruction
-                self.direction = 1
+                if self.type in (DoorType.DREV_NORMAL, DoorType.DREV_CLOSE):
+                    self._finish(sim)
+                elif self.type == DoorType.DREV_CLOSE30THENOPEN:
+                    self.direction = 0
+                    self.topcountdown = 35 * 30
+            elif res == MoveResult.RES_CRUSHED and self.type != DoorType.DREV_CLOSE:
+                self.direction = 1  # DREV_CLOSE: don't go back up
+        elif self.direction == 1:  # UP
+            res = t_move_plane(sim, self.sector, self.speed, self.topheight, 0, 1, self.direction)
+            if res == MoveResult.RES_PASTDEST:
+                stop_sequence(sim, self.sector)
+                if self.type == DoorType.DREV_NORMAL:
+                    self.direction = 0  # wait at top
+                    self.topcountdown = self.topwait
+                elif self.type in (DoorType.DREV_CLOSE30THENOPEN, DoorType.DREV_OPEN):
+                    self._finish(sim)
 
-        elif self.direction == 0:  # WAITING
-            self.topcountdown -= 1
-            if self.topcountdown <= 0:
-                self.direction = -1  # time to go back down
-                start_door_sequence(sim, self.sector)
+    def _finish(self, sim: GameSim) -> None:
+        self.sector.special_data = None
+        sim.tag_finished(self.sector.tag)
+        self.removed = True
 
     def state_tuple(self) -> tuple[Any, ...]:
         return (
@@ -149,56 +144,76 @@ class VerticalDoor(Thinker):
         }
 
 
-def ev_do_door(
-    sim: GameSim,
-    line: Line | None,
-    type_: DoorType,
-    speed: int,
-    tag: int = 0,
-    topwait: int = VDOORWAIT,
-) -> bool:
-    assert sim.level is not None
-    if tag == 0 and line is not None and line.back_sector is not None:
-        sec = line.back_sector
-        door = VerticalDoor(sec, type_, speed, topwait=topwait)
-        sec.special_data = door
-        sim.thinkers.add(door)
-        start_door_sequence(sim, sec)
-        return True
+def ev_do_door(sim: GameSim, line: Line | None, args: tuple[int, ...], type_: DoorType) -> bool:
+    """Port of EV_DoDoor (p_doors.c): move every idle sector tagged `args[0]`.
 
-    sectors = find_sectors_from_tag(sim.level, tag)
-    if not sectors:
-        return False
-    for sec in sectors:
-        door = VerticalDoor(sec, type_, speed, topwait=topwait)
+    Tag 0 matches untagged sectors, as P_FindSectorFromTag does; the Door_Open/Raise
+    specials send tag 0 to EV_VerticalDoor first.
+    """
+    assert sim.level is not None
+    speed = c_div(args[1] * FRACUNIT, 8)
+    started = False
+    for sec in find_sectors_from_tag(sim.level, args[0]):
+        if sec.special_data is not None:
+            continue
+        started = True
+        door = VerticalDoor(sec, type_, speed, topwait=args[2])
+        if type_ == DoorType.DREV_CLOSE:
+            door.direction = -1
+        elif type_ == DoorType.DREV_CLOSE30THENOPEN:
+            door.topheight = sec.ceiling_height
+            door.direction = -1
+        elif type_ in (DoorType.DREV_NORMAL, DoorType.DREV_OPEN):
+            door.direction = 1
         sec.special_data = door
         sim.thinkers.add(door)
         start_door_sequence(sim, sec)
+    return started
+
+
+def ev_vertical_door(sim: GameSim, line: Line | None, mo: Any) -> bool:
+    """Port of EV_VerticalDoor (p_doors.c): open the door behind `line` (tag 0)."""
+    if line is None or line.back_sector is None:
+        return False
+    sec = line.back_sector
+    if sec.special_data is not None:
+        return False  # the sector already has an active thinker
+    if line.special == 11:
+        door_type = DoorType.DREV_OPEN
+        line.special = 0
+    else:
+        door_type = DoorType.DREV_NORMAL
+    door = VerticalDoor(sec, door_type, line.args[1] * (FRACUNIT // 8), topwait=line.args[2])
+    door.direction = 1
+    sim.thinkers.add(door)
+    sec.special_data = door
+    start_door_sequence(sim, sec)
     return True
 
 
 def special_door_close(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
-    tag, speed_byte = args[0], args[1]
-    return ev_do_door(sim, line, DoorType.DREV_CLOSE, (speed_byte * FRACUNIT) >> 3, tag)
+    """Door_Close (10)."""
+    return ev_do_door(sim, line, args, DoorType.DREV_CLOSE)
 
 
 def special_door_open(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
-    tag, speed_byte = args[0], args[1]
-    return ev_do_door(sim, line, DoorType.DREV_OPEN, (speed_byte * FRACUNIT) >> 3, tag)
+    """Door_Open (11)."""
+    if not args[0]:
+        return ev_vertical_door(sim, line, mo)
+    return ev_do_door(sim, line, args, DoorType.DREV_OPEN)
 
 
 def special_door_raise(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
-    tag, speed_byte, wait_tics = args[0], args[1], args[2]
-    wait = wait_tics if wait_tics > 0 else VDOORWAIT
-    return ev_do_door(
-        sim, line, DoorType.DREV_NORMAL, (speed_byte * FRACUNIT) >> 3, tag, topwait=wait
-    )
+    """Door_Raise (12)."""
+    if not args[0]:
+        return ev_vertical_door(sim, line, mo)
+    return ev_do_door(sim, line, args, DoorType.DREV_NORMAL)
 
 
 def checked_locked_door(sim: GameSim, mo: Any, lock: int) -> bool:
@@ -218,13 +233,12 @@ def checked_locked_door(sim: GameSim, mo: Any, lock: int) -> bool:
 def special_door_locked_raise(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
-    tag, speed_byte, wait_tics, key = args[0], args[1], args[2], args[3]
-    if not checked_locked_door(sim, mo, key):
+    """Door_LockedRaise (13)."""
+    if not checked_locked_door(sim, mo, args[3]):
         return False
-    wait = wait_tics if wait_tics > 0 else VDOORWAIT
-    return ev_do_door(
-        sim, line, DoorType.DREV_NORMAL, (speed_byte * FRACUNIT) >> 3, tag, topwait=wait
-    )
+    if not args[0]:
+        return ev_vertical_door(sim, line, mo)
+    return ev_do_door(sim, line, args, DoorType.DREV_NORMAL)
 
 
 SPECIAL_HANDLERS: dict[int, Any] = {

@@ -349,8 +349,8 @@ class ACSVM:
         return False
 
     def is_tag_busy(self, tag: int, sim: GameSim) -> bool:
-        """Port of TagBusy (p_acs.c)."""
-        if sim.level is None or tag == 0:
+        """Port of TagBusy (p_acs.c). Tag 0 checks the untagged sectors, as in vanilla."""
+        if sim.level is None:
             return False
         return any(s.special_data is not None for s in find_sectors_from_tag(sim.level, tag))
 

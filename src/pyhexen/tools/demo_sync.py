@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -25,9 +25,11 @@ from pyhexen.sim.demo import Demo, build_demo_sim, decode_vanilla_demo
 from pyhexen.sim.demo_trace import (
     Divergence,
     MobjDump,
+    SectorDump,
     Trace,
     TraceTic,
     dump_mobjs,
+    dump_sectors,
     first_divergence,
     parse_trace,
     trace_tic,
@@ -44,6 +46,7 @@ class DemoRun:
 
     trace: list[TraceTic]
     dumps: dict[int, list[MobjDump]]
+    sector_dumps: dict[int, list[SectorDump]] = field(default_factory=dict)
 
 
 def run_demo(
@@ -54,13 +57,15 @@ def run_demo(
     sim = build_demo_sim(stack, mapinfo, demo)
     trace: list[TraceTic] = []
     dumps: dict[int, list[MobjDump]] = {}
+    sector_dumps: dict[int, list[SectorDump]] = {}
     wanted = set(dump_tics)
     for cmds in demo.tics:
         sim.tick(cmds)
         if sim.level_time in wanted:
             dumps[sim.level_time] = dump_mobjs(sim)
+            sector_dumps[sim.level_time] = dump_sectors(sim)
         trace.append(trace_tic(sim))
-    return DemoRun(trace=trace, dumps=dumps)
+    return DemoRun(trace=trace, dumps=dumps, sector_dumps=sector_dumps)
 
 
 def load_reference(trace_dir: Path, lump: str) -> Trace:
@@ -147,6 +152,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("  (no reference dump at that tic)")
                 continue
             _print_dump_diff(ref_dump, ours.dumps.get(tic, []))
+            ref_sectors = reference.sector_dumps.get(tic, [])
+            our_sectors = ours.sector_dumps.get(tic, [])
+            sector_diffs = [
+                f"  sector {a.index}: (floor, ceiling, light) "
+                f"{(a.floor, a.ceiling, a.light)} != {(b.floor, b.ceiling, b.light)}"
+                for a, b in zip(ref_sectors, our_sectors, strict=False)
+                if a != b
+            ]
+            for line in sector_diffs[:20]:
+                print(line)
+            if len(sector_diffs) > 20:
+                print(f"  ... {len(sector_diffs) - 20} more sectors")
     return 0 if all_ok else 1
 
 

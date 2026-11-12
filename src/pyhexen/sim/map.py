@@ -21,8 +21,8 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.fixed import FRACUNIT, abs32, fixed_mul
-from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType
+from pyhexen.core.fixed import FRACUNIT, abs32, c_div, fixed_mul
+from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum, StateNum
 from pyhexen.sim.maputl import (
     PT_ADDLINES,
     Intercept,
@@ -48,6 +48,7 @@ from pyhexen.world.level import (
     SPAC_PCROSS,
     SPAC_PUSH,
     Line,
+    Sector,
     SlopeType,
 )
 
@@ -72,6 +73,8 @@ class MapCheckState:
     tmceilingz: int = 0
     tmdropoffz: int = 0
     tmfloorpic: int | str = 0
+    # PIT_ChangeSector: something no longer fits (vanilla `nofit`)
+    nofit: bool = False
     ceilingline: Line | None = None
     blocking_mobj: Mobj | None = None
     floatok: bool = False
@@ -747,3 +750,96 @@ def slide_move(sim: GameSim, mo: Mobj) -> None:
     # Exhausted 3 slide iterations; stairstep fallback
     if not try_move(sim, mo, mo.x, mo.y + mo.momy):
         try_move(sim, mo, mo.x + mo.momx, mo.y)
+
+
+# ----------------------------------------------------------------------
+# Sector height changes
+# ----------------------------------------------------------------------
+
+
+def thing_height_clip(sim: GameSim, thing: Mobj) -> bool:
+    """Fit `thing` to its sector's new floor and ceiling; False if it no longer fits.
+
+    Port of P_ThingHeightClip (p_map.c). Things standing on the floor ride it (when
+    within 9 units, or always for MF_NOGRAVITY); floating things are only pushed down
+    by a ceiling.
+    """
+    onfloor = thing.z == thing.floorz
+    check_position(sim, thing, thing.x, thing.y)
+    st = sim.map_state
+    thing.floorz = st.tmfloorz
+    thing.ceilingz = st.tmceilingz
+    thing.floorpic = st.tmfloorpic
+
+    if onfloor:
+        # walking monsters rise and fall with the floor
+        if thing.z - thing.floorz < 9 * FRACUNIT or thing.flags & MobjFlag.MF_NOGRAVITY:
+            thing.z = thing.floorz
+    elif thing.z + thing.height > thing.ceilingz:
+        # don't adjust a floating monster unless forced to
+        thing.z = thing.ceilingz - thing.height
+
+    return thing.ceilingz - thing.floorz >= thing.height
+
+
+def _pit_change_sector(sim: GameSim, thing: Mobj, crunch: int) -> bool:
+    """Port of PIT_ChangeSector (p_map.c). Sets `map_state.nofit` for things that don't fit."""
+    from pyhexen.sim.inter import damage_mobj
+    from pyhexen.sim.mobj import remove_mobj, set_mobj_state, spawn_mobj
+    from pyhexen.sim.sound import start_sound
+
+    if thing_height_clip(sim, thing):
+        return True  # keep checking
+
+    # crunch bodies to giblets
+    if thing.flags & MobjFlag.MF_CORPSE and thing.health <= 0:
+        if thing.flags & MobjFlag.MF_NOBLOOD:
+            remove_mobj(sim, thing)
+        elif thing.state_num != StateNum.S_GIBS1:
+            set_mobj_state(sim, thing, StateNum.S_GIBS1)
+            thing.height = 0
+            thing.radius = 0
+            start_sound(sim, thing, int(SfxEnum.SFX_PLAYER_FALLING_SPLAT))
+        return True
+
+    # crunch dropped items
+    if thing.flags2 & MobjFlag2.MF2_DROPPED:
+        remove_mobj(sim, thing)
+        return True
+
+    if not (thing.flags & MobjFlag.MF_SHOOTABLE):
+        return True  # assume it is bloody gibs or something
+
+    sim.map_state.nofit = True
+    if crunch and not (sim.level_time & 3):
+        damage_mobj(sim, target=thing, inflictor=None, source=None, damage=crunch)
+        # spray blood in a random direction
+        if not (thing.flags & MobjFlag.MF_NOBLOOD) and not (
+            thing.flags2 & MobjFlag2.MF2_INVULNERABLE
+        ):
+            mo = spawn_mobj(
+                sim, thing.x, thing.y, thing.z + c_div(thing.height, 2), MobjType.MT_BLOOD
+            )
+            mo.momx = sim.rng.p_subrandom() << 12
+            mo.momy = sim.rng.p_subrandom() << 12
+    return True
+
+
+def change_sector(sim: GameSim, sector: Sector, crunch: int) -> bool:
+    """Recheck every thing near `sector` after its floor or ceiling moved.
+
+    Port of P_ChangeSector (p_map.c). Returns True if anything no longer fits. With a
+    non-zero `crunch` (damage per 4 tics) shootable things are crushed; otherwise the
+    caller should put the plane back and call this again.
+    """
+    level = sim.level
+    if level is None:
+        return False
+    st = sim.map_state
+    st.nofit = False
+    top, bottom, left, right = sector.bbox
+    bm = level.blockmap
+    for x in range(left, right + 1):
+        for y in range(bottom, top + 1):
+            bm.block_things_iterator(x, y, lambda mo: _pit_change_sector(sim, mo, crunch))
+    return st.nofit

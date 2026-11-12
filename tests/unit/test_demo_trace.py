@@ -10,15 +10,19 @@ from dataclasses import replace
 
 from tests.fixtures.wadbuilder import MapBuilder, WadBuilder
 
+from pyhexen.core.fixed import FRACUNIT
 from pyhexen.core.ticcmd import TicCmd
 from pyhexen.sim.demo import Demo, DemoHeader, DemoPlayer, play_demo_to_completion
 from pyhexen.sim.demo_trace import (
     MobjDump,
+    SectorDump,
     TraceTic,
     dump_mobjs,
+    dump_sectors,
     first_divergence,
     mobj_hash,
     parse_trace,
+    sector_hash,
     trace_tic,
 )
 from pyhexen.sim.game_sim import GameSim
@@ -47,13 +51,28 @@ def _tic(level_time: int, **changes: int) -> TraceTic:
 
 
 def test_trace_round_trips_through_text() -> None:
-    tics = [_tic(1), _tic(2, x=-7, mobj_hash=0x0000ABCD)]
+    tics = [_tic(1), _tic(2, x=-7, mobj_hash=0x0000ABCD, sector_hash=0x12)]
     dump = [MobjDump(1, 2, 3, 4, -5, 6, 7, 0xFFFFFFFF, 100, 42, -1, 0x10)]
-    text = tics[0].format() + "\n" + dump[0].format() + "\n" + tics[1].format() + "\n"
-    assert "0000abcd" in text  # hash is 8 hex digits, like %08x
+    sectors = [SectorDump(0, -(8 << 16), 128 << 16, 160)]
+    text = "\n".join(
+        [tics[0].format(), dump[0].format(), sectors[0].format(), tics[1].format(), ""]
+    )
+    assert "0000abcd 00000012" in text  # hashes are 8 hex digits, like %08x
     trace = parse_trace(text)
     assert trace.tics == tics
-    assert trace.dumps == {2: dump}  # dumps belong to the T line that follows them
+    # dumps belong to the T line that follows them
+    assert trace.dumps == {2: dump}
+    assert trace.sector_dumps == {2: sectors}
+
+
+def test_sector_hash_tracks_floor_ceiling_and_light() -> None:
+    sim = _sim()
+    assert sim.level is not None
+    before = sector_hash(sim)
+    assert trace_tic(sim).sector_hash == before
+    sim.level.sectors[0].floor_height -= FRACUNIT
+    assert sector_hash(sim) != before
+    assert dump_sectors(sim)[0].floor == sim.level.sectors[0].floor_height
 
 
 def test_parse_rejects_garbage() -> None:

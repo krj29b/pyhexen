@@ -112,6 +112,41 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | S4 | Mod & PWAD support | T2.6, T8.1 | TODO | Custom MAPINFO/ACS PWAD support |
 | S5 | Visual extras | T14.2 | TODO | Dynamic lights, optional smooth filtering, widescreen status bar |
 
+## Next session (handoff, 2026-11-12)
+
+**Start with T15.8** (port the 35 missing line specials). It blocks DEMO1 sync and real
+gameplay: stairs, many floor/ceiling/plat/pillar specials, Radius_Quake, UsePuzzleItem and
+the Thing_Spawn family currently do nothing (`execute_line_special` returns False).
+
+Suggested order:
+1. Add the guard test first: every `case` in vanilla `P_ExecuteLineSpecial` (p_spec.c) has a
+   handler. A quick check (it found the 35) parses the cases from `reference/src/hexen/p_spec.c`
+   and compares them with `dispatcher._HANDLERS` after `_sync_sibling_handlers()`.
+2. `EV_BuildStairs` + `ProcessStairSector` (p_floor.c; specials 26, 27, 31, 32). DEMO1 needs 26
+   at tic 420 (MAP03 script 2: `Stairs_BuildDown(3, 8, 16, 0, 0)`).
+3. The rest of `EV_DoFloor` (21, 22, 24, 25, 28, 35, 36, 46, 66, 67, 68, 95, 96), then
+   ceilings (43, 44, 45, 69), plats (60, 61, 63-65), pillars (30, 94), p_things.c (133-137),
+   120 and 129.
+4. While there, review `FloorMove`, `CeilingMove`, `Plat`, `Pillar` against T_MoveFloor,
+   T_MoveCeiling, T_PlatRaise, T_BuildPillar. They are simplified like the doors and waggle
+   were; `t_move_plane` (T15.6a) is now faithful, so their RES_CRUSHED handling matters.
+5. Check sync after each step:
+   `uv run python -m pyhexen.tools.demo_sync --iwad <IWAD>`; then raise `SYNCED_TICS_V10` in
+   `tests/wad/test_vanilla_demos.py`.
+
+Current sync (v1.0 IWAD): DEMO1 419 / 968 tics (stairs, T15.8), DEMO2 2 / 2619 (Heresiarch,
+T15.6b), DEMO3 170 / 2404 (undiagnosed, T15.6c). Other open tasks: T15.6d (renderer shows sim
+animations), T15.7 (playthrough, M6).
+
+**Demo-sync workflow** (ADR-011): traces live in gitignored `out/demo_traces/` and must be
+re-recorded after changing `tools/demo_trace/pyh_trace.c`. Start Docker Desktop, then
+`uv run python tools/demo_trace/record_traces.py --iwad <IWAD> [--dump 420,421] [DEMO1]`
+(real-time playback, about 3 min for all three). Diff a tic with
+`uv run python -m pyhexen.tools.demo_sync --iwad <IWAD> --dump 420 DEMO1` (mobjs aligned by
+type and position, plus sector floor/ceiling/light). For "which code ran", wrap `sim.rng`
+in a `Random` subclass that logs `traceback` per `p_random()` call, or monkeypatch module
+functions (e.g. `find_sectors_from_tag`, `try_move`) for one tic.
+
 ## Session log
 <!-- Append: date · agent · task(s) · one-line summary -->
 - 2026-11-05 · Antigravity · T8.2–T8.4 · ACS VM interpreter, 102 game pcodes, lifecycle specials (80-83), ACSStore, open scripts, sector mover tag finished wakeups

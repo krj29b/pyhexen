@@ -281,4 +281,8 @@ def p_spawn_specials(sim: GameSim) -> None:
                 sim.tagged_lines.setdefault(line.args[0], []).append(line)
             line.special = 0
 
+    # Init other misc stuff
+    sim.active_ceilings = [None] * len(sim.active_ceilings)
+    sim.active_plats = [None] * len(sim.active_plats)
+
     spawn_line_scrollers(sim)

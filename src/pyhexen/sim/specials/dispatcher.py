@@ -19,8 +19,7 @@ from typing import TYPE_CHECKING, Any
 from pyhexen.core.angles import ANG90
 from pyhexen.core.events import SectorChanged
 from pyhexen.core.fixed import FRACBITS, FRACUNIT, MAXINT
-from pyhexen.sim.info_data import MobjFlag2
-from pyhexen.sim.mobj import Mobj, remove_mobj
+from pyhexen.sim.mobj import Mobj
 from pyhexen.sim.movement import thrust_mobj
 from pyhexen.world.level import ML_TWOSIDED, Level, Line, Sector
 
@@ -133,6 +132,7 @@ _SIBLING_MODULES: tuple[str, ...] = (
     "teleport",
     "switches",
     "scroll",
+    "things",
 )
 
 
@@ -521,24 +521,6 @@ def _ev_thrust_thing(
     return True
 
 
-@line_special(73, "DamageThing")
-def _ev_damage_thing(
-    sim: GameSim,
-    args: tuple[int, int, int, int, int],
-    line: Line | None,
-    mo: Mobj | None,
-) -> bool:
-    _ = (sim, line)
-    if mo is None:
-        return False
-    dmg = args[0] if args[0] > 0 else 10000
-    mo.health -= dmg
-    if mo.player is not None:
-        mo.player.health = mo.health
-        mo.player.damagecount += dmg
-    return True
-
-
 @line_special(70, "Teleport")
 def _ev_teleport(
     sim: GameSim,
@@ -721,39 +703,6 @@ def _ev_acs_locked_execute(
 def _ev_force_lightning(sim: GameSim) -> bool:
     if sim.surface_animator is not None:
         sim.surface_animator.force_lightning()
-    return True
-
-
-@line_special(130, "Thing_Activate")
-def _ev_thing_activate(sim: GameSim, args: tuple[int, int, int, int, int]) -> bool:
-    mobjs = sim.find_mobjs_by_tid(args[0])
-    if not mobjs:
-        return False
-    for m in mobjs:
-        m.flags2 &= ~MobjFlag2.MF2_DORMANT
-        if m.tics == -1:
-            m.tics = 1
-    return True
-
-
-@line_special(131, "Thing_Deactivate")
-def _ev_thing_deactivate(sim: GameSim, args: tuple[int, int, int, int, int]) -> bool:
-    mobjs = sim.find_mobjs_by_tid(args[0])
-    if not mobjs:
-        return False
-    for m in mobjs:
-        m.flags2 |= MobjFlag2.MF2_DORMANT
-        m.tics = -1
-    return True
-
-
-@line_special(132, "Thing_Remove")
-def _ev_thing_remove(sim: GameSim, args: tuple[int, int, int, int, int]) -> bool:
-    mobjs = sim.find_mobjs_by_tid(args[0])
-    if not mobjs:
-        return False
-    for m in mobjs:
-        remove_mobj(sim, m)
     return True
 
 

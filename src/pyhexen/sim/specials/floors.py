@@ -2,25 +2,31 @@
 # Portions derived from Hexen (c) Raven Software / id Software and Chocolate Doom,
 # released under the GNU GPL v2. This file is licensed GPL-2.0-or-later.
 
-"""Floor movers, stairs, donut, and floor waggle (T7.3).
+"""Floor movers, stairs and floor waggle (T7.3, T15.8).
 
-Port of p_floor.c.
+Port of p_floor.c, except the pillars (see pillars.py).
 """
 
 from __future__ import annotations
 
+from collections import deque
+from collections.abc import Sequence
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
-from pyhexen.core.fixed import FRACBITS, FRACUNIT, c_div, fixed_mul, to_int32
+from pyhexen.core.fixed import FRACBITS, FRACUNIT, c_div, fixed_div, fixed_mul, to_int32
 from pyhexen.sim.mobj import FLOAT_BOB_OFFSETS
 from pyhexen.sim.sound import start_platform_sequence, stop_sequence
 from pyhexen.sim.specials.dispatcher import (
+    find_highest_floor_surrounding,
+    find_lowest_ceiling_surrounding,
+    find_lowest_floor_surrounding,
+    find_next_highest_floor,
     find_sectors_from_tag,
     notify_sector_changed,
 )
 from pyhexen.sim.thinker import Thinker
-from pyhexen.world.level import Sector
+from pyhexen.world.level import ML_TWOSIDED, Sector
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -47,8 +53,13 @@ def t_move_plane(
     with P_ChangeSector. `crush` is the damage dealt every 4 tics to things that no
     longer fit (0: none). When things don't fit the plane goes back; a normal step then
     reports RES_CRUSHED (a rising ceiling never does). Reaching `dest` reports
-    RES_PASTDEST, only when the step would go past it.
+    RES_PASTDEST, only when the step would go past it. A `direction` of 0 does nothing
+    (vanilla's switch has no such case), which is what keeps a Floor_MoveToValueTimes8
+    thinker with nowhere to go alive.
     """
+    if direction not in (-1, 1):
+        return MoveResult.RES_OK
+
     from pyhexen.sim.map import change_sector
 
     is_floor = floor_or_ceiling == 0
@@ -81,8 +92,38 @@ def t_move_plane(
     return result
 
 
+class FloorType(IntEnum):
+    """Port of floor_e (p_spec.h)."""
+
+    FLEV_LOWERFLOOR = 0  # lower floor to highest surrounding floor
+    FLEV_LOWERFLOORTOLOWEST = 1  # lower floor to lowest surrounding floor
+    FLEV_LOWERFLOORBYVALUE = 2
+    FLEV_RAISEFLOOR = 3  # raise floor to lowest surrounding CEILING
+    FLEV_RAISEFLOORTONEAREST = 4  # raise floor to next highest surrounding floor
+    FLEV_RAISEFLOORBYVALUE = 5
+    FLEV_RAISEFLOORCRUSH = 6
+    FLEV_RAISEBUILDSTEP = 7  # One step of a staircase
+    FLEV_RAISEBYVALUETIMES8 = 8
+    FLEV_LOWERBYVALUETIMES8 = 9
+    FLEV_LOWERTIMES8INSTANT = 10
+    FLEV_RAISETIMES8INSTANT = 11
+    FLEV_MOVETOVALUETIMES8 = 12
+
+
+class StairsType(IntEnum):
+    """Port of stairs_e (p_spec.h). STAIRS_PHASED is never started by vanilla."""
+
+    STAIRS_NORMAL = 0
+    STAIRS_SYNC = 1
+    STAIRS_PHASED = 2
+
+
 class FloorMove(Thinker):
-    """Port of floormove_t and T_MoveFloor (p_floor.c)."""
+    """Port of floormove_t and T_MoveFloor (p_floor.c).
+
+    `textureChange` is left out: only STAIRS_PHASED sets it, and no line special
+    starts phased stairs.
+    """
 
     def __init__(
         self,
@@ -91,15 +132,36 @@ class FloorMove(Thinker):
         dest: int,
         direction: int,
         crush: int = 0,
+        floor_type: int = FloorType.FLEV_RAISEFLOORBYVALUE,
     ) -> None:
         super().__init__()
         self.sector = sector
+        self.type = int(floor_type)
         self.speed = speed
         self.floordestheight = dest
         self.direction = direction
         self.crush = crush
+        self.reset_height = 0
+        self.reset_delay = 0
+        self.reset_delay_count = 0
+        self.delay_count = 0
+        self.delay_total = 0
+        self.stairs_delay_height = 0
+        self.stairs_delay_height_delta = 0
 
     def tick(self, sim: GameSim) -> None:
+        if self.reset_delay_count:
+            self.reset_delay_count -= 1
+            if not self.reset_delay_count:
+                self.floordestheight = self.reset_height
+                self.direction = -self.direction
+                self.reset_delay = 0
+                self.delay_count = 0
+                self.delay_total = 0
+        if self.delay_count:
+            self.delay_count -= 1
+            return
+
         res = t_move_plane(
             sim,
             self.sector,
@@ -109,32 +171,63 @@ class FloorMove(Thinker):
             floor_or_ceiling=0,
             direction=self.direction,
         )
+
+        if self.type == FloorType.FLEV_RAISEBUILDSTEP:
+            floor_height = self.sector.floor_height
+            if (self.direction == 1 and floor_height >= self.stairs_delay_height) or (
+                self.direction == -1 and floor_height <= self.stairs_delay_height
+            ):
+                self.delay_count = self.delay_total
+                self.stairs_delay_height += self.stairs_delay_height_delta
         if res == MoveResult.RES_PASTDEST:
             stop_sequence(sim, self.sector)
+            if self.delay_total:
+                self.delay_total = 0
+            if self.reset_delay:
+                # Stairs that reset wait here until reset_delay_count runs out.
+                return
+            self.sector.special_data = None
+            sim.tag_finished(self.sector.tag)
             self.removed = True
-            if self.sector is not None:
-                self.sector.special_data = None
-                sim.tag_finished(self.sector.tag)
+
+    _FIELDS = (
+        "type",
+        "speed",
+        "direction",
+        "crush",
+        "reset_height",
+        "reset_delay",
+        "reset_delay_count",
+        "delay_count",
+        "delay_total",
+        "stairs_delay_height",
+        "stairs_delay_height_delta",
+    )
 
     def state_tuple(self) -> tuple[Any, ...]:
         return (
             "FloorMove",
             self.sector.index if self.sector is not None else -1,
-            self.speed,
             self.floordestheight,
-            self.direction,
-            self.crush,
+            *(getattr(self, f) for f in self._FIELDS),
         )
 
     def to_state(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "type": "FloorMove",
             "sector_index": self.sector.index if self.sector is not None else -1,
-            "speed": self.speed,
             "dest": self.floordestheight,
-            "direction": self.direction,
-            "crush": self.crush,
         }
+        # "type" is the thinker class name in saves, so the floor_e value is "floor_type".
+        data.update({("floor_type" if f == "type" else f): getattr(self, f) for f in self._FIELDS})
+        return data
+
+    def load_fields(self, entry: dict[str, Any]) -> None:
+        """Restore the fields written by `to_state` (older saves lack most of them)."""
+        for f in self._FIELDS:
+            key = "floor_type" if f == "type" else f
+            if key in entry:
+                setattr(self, f, int(entry[key]))
 
 
 WGLSTATE_EXPAND = 1
@@ -260,42 +353,236 @@ def ev_start_floor_waggle(
     return started
 
 
-def ev_do_floor(
-    sim: GameSim,
-    tag: int,
-    speed: int,
-    height: int,
-    direction: int,
-    crush: int = 0,
-) -> bool:
+def ev_do_floor(sim: GameSim, args: Sequence[int], floortype: int) -> bool:
+    """Port of EV_DoFloor (p_floor.c): start a floor mover in every idle sector tagged `args[0]`.
+
+    As in vanilla, Floor_MoveToValueTimes8 on a floor already at the value still leaves
+    a thinker with direction 0 in the sector (it never finishes) and reports failure.
+    """
     assert sim.level is not None
-    sectors = find_sectors_from_tag(sim.level, tag)
-    if not sectors:
-        return False
-    for sec in sectors:
-        dest = sec.floor_height + direction * height if height > 0 else height
-        mover = FloorMove(sec, speed, dest, direction, crush)
-        sec.special_data = mover
-        sim.thinkers.add(mover)
-    # Vanilla EV_DoFloor starts one sequence after the loop, on the last sector.
-    start_platform_sequence(sim, mover.sector)
+    rtn = False
+    floor: FloorMove | None = None
+    for sec in find_sectors_from_tag(sim.level, args[0]):
+        if sec.special_data is not None:
+            continue  # ALREADY MOVING?  IF SO, KEEP GOING...
+
+        rtn = True
+        speed = args[1] * (FRACUNIT // 8)
+        if floortype in (FloorType.FLEV_LOWERTIMES8INSTANT, FloorType.FLEV_RAISETIMES8INSTANT):
+            speed = 2000 << FRACBITS
+        floor = FloorMove(sec, speed, 0, 0, 0, floor_type=floortype)
+        sim.thinkers.add(floor)
+        sec.special_data = floor
+
+        if floortype == FloorType.FLEV_LOWERFLOOR:
+            floor.direction = -1
+            floor.floordestheight = find_highest_floor_surrounding(sec)
+        elif floortype == FloorType.FLEV_LOWERFLOORTOLOWEST:
+            floor.direction = -1
+            floor.floordestheight = find_lowest_floor_surrounding(sec)
+        elif floortype == FloorType.FLEV_LOWERFLOORBYVALUE:
+            floor.direction = -1
+            floor.floordestheight = sec.floor_height - args[2] * FRACUNIT
+        elif floortype in (
+            FloorType.FLEV_LOWERTIMES8INSTANT,
+            FloorType.FLEV_LOWERBYVALUETIMES8,
+        ):
+            floor.direction = -1
+            floor.floordestheight = sec.floor_height - args[2] * FRACUNIT * 8
+        elif floortype == FloorType.FLEV_RAISEFLOORCRUSH:
+            floor.crush = args[2]  # arg[2] = crushing value
+            floor.direction = 1
+            floor.floordestheight = sec.ceiling_height - 8 * FRACUNIT
+        elif floortype == FloorType.FLEV_RAISEFLOOR:
+            floor.direction = 1
+            floor.floordestheight = min(find_lowest_ceiling_surrounding(sec), sec.ceiling_height)
+        elif floortype == FloorType.FLEV_RAISEFLOORTONEAREST:
+            floor.direction = 1
+            floor.floordestheight = find_next_highest_floor(sec, sec.floor_height)
+        elif floortype == FloorType.FLEV_RAISEFLOORBYVALUE:
+            floor.direction = 1
+            floor.floordestheight = sec.floor_height + args[2] * FRACUNIT
+        elif floortype in (
+            FloorType.FLEV_RAISETIMES8INSTANT,
+            FloorType.FLEV_RAISEBYVALUETIMES8,
+        ):
+            floor.direction = 1
+            floor.floordestheight = sec.floor_height + args[2] * FRACUNIT * 8
+        elif floortype == FloorType.FLEV_MOVETOVALUETIMES8:
+            floor.floordestheight = args[2] * FRACUNIT * 8
+            if args[3]:
+                floor.floordestheight = -floor.floordestheight
+            if floor.floordestheight > sec.floor_height:
+                floor.direction = 1
+            elif floor.floordestheight < sec.floor_height:
+                floor.direction = -1
+            else:  # already at lowest position
+                rtn = False
+        else:
+            rtn = False
+    if rtn and floor is not None:
+        # One sequence after the loop, on the last sector that got a thinker.
+        start_platform_sequence(sim, floor.sector)
+    return rtn
+
+
+def ev_do_floor_and_ceiling(sim: GameSim, args: Sequence[int], raise_: bool) -> bool:
+    """Port of EV_DoFloorAndCeiling (p_floor.c).
+
+    The floor thinker's claim on the sector is dropped so the ceiling thinker can start
+    too; the sector then holds the ceiling thinker until either of them finishes.
+    """
+    from pyhexen.sim.specials.ceilings import CeilingType, ev_do_ceiling
+
+    assert sim.level is not None
+    floor = ev_do_floor(
+        sim,
+        args,
+        FloorType.FLEV_RAISEFLOORBYVALUE if raise_ else FloorType.FLEV_LOWERFLOORBYVALUE,
+    )
+    for sec in find_sectors_from_tag(sim.level, args[0]):
+        sec.special_data = None
+    ceiling = ev_do_ceiling(
+        sim,
+        args,
+        CeilingType.CLEV_RAISEBYVALUE if raise_ else CeilingType.CLEV_LOWERBYVALUE,
+    )
+    return floor or ceiling
+
+
+STAIR_SECTOR_TYPE = 26
+STAIR_QUEUE_SIZE = 32
+
+
+def ev_build_stairs(sim: GameSim, args: Sequence[int], direction: int, stairs_type: int) -> bool:
+    """Port of EV_BuildStairs, QueueStairSector and ProcessStairSector (p_floor.c).
+
+    Starts at the idle sectors tagged `args[0]` and spreads breadth-first to neighbours
+    whose special alternates 26 / 27 and whose floor flat matches. Each step ends
+    `args[2]` units past the previous one. `direction` is 1 (up) or -1 (down).
+    """
+    level = sim.level
+    assert level is not None
+
+    step_delta = direction * (args[2] * FRACUNIT)
+    speed = args[1] * (FRACUNIT // 8)
+    reset_delay = args[4]
+    delay = args[3]
+    # Vanilla keeps these in globals set from every tagged sector, busy or not, so the
+    # last tagged sector decides them for the whole staircase.
+    texture = ""
+    start_height = 0
+
+    queue: deque[tuple[Sector, int, int]] = deque()
+
+    def queue_stair_sector(sec: Sector, type_: int, height: int) -> None:
+        if len(queue) + 1 >= STAIR_QUEUE_SIZE:
+            raise RuntimeError("BuildStairs:  Too many branches located.")
+        queue.append((sec, type_, height))
+
+    valid_count = level.blockmap.next_valid_count()
+    for sec in find_sectors_from_tag(level, args[0]):
+        texture = sec.floor_pic
+        start_height = sec.floor_height
+        if sec.special_data is not None:
+            continue  # ALREADY MOVING?  IF SO, KEEP GOING...
+        queue_stair_sector(sec, 0, sec.floor_height)
+        sec.special = 0
+
+    while queue:
+        sec, type_, height = queue.popleft()
+        # ProcessStairSector
+        height += step_delta
+        floor = FloorMove(sec, 0, height, direction, 0, floor_type=FloorType.FLEV_RAISEBUILDSTEP)
+        sim.thinkers.add(floor)
+        sec.special_data = floor
+        if stairs_type == StairsType.STAIRS_NORMAL:
+            floor.speed = speed
+            if delay:
+                floor.delay_total = delay
+                floor.stairs_delay_height = sec.floor_height + step_delta
+                floor.stairs_delay_height_delta = step_delta
+            floor.reset_delay = reset_delay
+            floor.reset_delay_count = reset_delay
+            floor.reset_height = sec.floor_height
+        elif stairs_type == StairsType.STAIRS_SYNC:
+            floor.speed = fixed_mul(speed, fixed_div(height - start_height, step_delta))
+            floor.reset_delay = delay  # arg4
+            floor.reset_delay_count = delay
+            floor.reset_height = sec.floor_height
+        start_platform_sequence(sim, sec)
+
+        # Find nearby sectors with sector special equal to type
+        for line in sec.lines:
+            if not (line.flags & ML_TWOSIDED):
+                continue
+            for tsec in (line.front_sector, line.back_sector):
+                if (
+                    tsec is not None
+                    and tsec.special == type_ + STAIR_SECTOR_TYPE
+                    and tsec.special_data is None
+                    and tsec.floor_pic == texture
+                    and tsec.valid_count != valid_count
+                ):
+                    queue_stair_sector(tsec, type_ ^ 1, height)
+                    tsec.valid_count = valid_count
     return True
 
 
-def special_floor_lower_by_value(
-    sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
-) -> bool:
-    # args: [tag, speed, height]
-    tag, speed_byte, height_byte = args[0], args[1], args[2]
-    return ev_do_floor(sim, tag, (speed_byte * FRACUNIT) >> 3, height_byte * FRACUNIT, direction=-1)
+def ev_floor_crush_stop(sim: GameSim) -> bool:
+    """Port of EV_FloorCrushStop (p_floor.c): remove every crushing floor, whatever its tag."""
+    rtn = False
+    for thinker in sim.thinkers:
+        if not isinstance(thinker, FloorMove) or thinker.type != FloorType.FLEV_RAISEFLOORCRUSH:
+            continue
+        # Completely remove the crushing floor
+        stop_sequence(sim, thinker.sector)
+        thinker.sector.special_data = None
+        sim.tag_finished(thinker.sector.tag)
+        thinker.removed = True
+        rtn = True
+    return rtn
 
 
-def special_floor_raise_by_value(
+def _floor_special(floortype: FloorType) -> Any:
+    def handler(sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any) -> bool:
+        return ev_do_floor(sim, args, floortype)
+
+    handler.__doc__ = f"EV_DoFloor(line, args, {floortype.name}) (p_spec.c)."
+    return handler
+
+
+special_floor_lower_by_value = _floor_special(FloorType.FLEV_LOWERFLOORBYVALUE)
+special_floor_raise_by_value = _floor_special(FloorType.FLEV_RAISEFLOORBYVALUE)
+
+
+def _stairs_special(direction: int, stairs_type: StairsType) -> Any:
+    def handler(sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any) -> bool:
+        return ev_build_stairs(sim, args, direction, stairs_type)
+
+    handler.__doc__ = f"EV_BuildStairs(line, args, {direction}, {stairs_type.name}) (p_spec.c)."
+    return handler
+
+
+def special_floor_crush_stop(
     sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
 ) -> bool:
-    # args: [tag, speed, height]
-    tag, speed_byte, height_byte = args[0], args[1], args[2]
-    return ev_do_floor(sim, tag, (speed_byte * FRACUNIT) >> 3, height_byte * FRACUNIT, direction=1)
+    """Floor_CrushStop (46)."""
+    return ev_floor_crush_stop(sim)
+
+
+def special_floor_and_ceiling_lower_by_value(
+    sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
+) -> bool:
+    """FloorAndCeiling_LowerByValue (95)."""
+    return ev_do_floor_and_ceiling(sim, args, False)
+
+
+def special_floor_and_ceiling_raise_by_value(
+    sim: GameSim, special: int, args: tuple[int, ...], line: Any, mo: Any
+) -> bool:
+    """FloorAndCeiling_RaiseByValue (96)."""
+    return ev_do_floor_and_ceiling(sim, args, True)
 
 
 def special_floor_waggle(
@@ -307,6 +594,23 @@ def special_floor_waggle(
 
 SPECIAL_HANDLERS: dict[int, Any] = {
     20: special_floor_lower_by_value,
+    21: _floor_special(FloorType.FLEV_LOWERFLOORTOLOWEST),
+    22: _floor_special(FloorType.FLEV_LOWERFLOOR),
     23: special_floor_raise_by_value,
+    24: _floor_special(FloorType.FLEV_RAISEFLOOR),
+    25: _floor_special(FloorType.FLEV_RAISEFLOORTONEAREST),
+    26: _stairs_special(-1, StairsType.STAIRS_NORMAL),
+    27: _stairs_special(1, StairsType.STAIRS_NORMAL),
+    28: _floor_special(FloorType.FLEV_RAISEFLOORCRUSH),
+    31: _stairs_special(-1, StairsType.STAIRS_SYNC),
+    32: _stairs_special(1, StairsType.STAIRS_SYNC),
+    35: _floor_special(FloorType.FLEV_RAISEBYVALUETIMES8),
+    36: _floor_special(FloorType.FLEV_LOWERBYVALUETIMES8),
+    46: special_floor_crush_stop,
+    66: _floor_special(FloorType.FLEV_LOWERTIMES8INSTANT),
+    67: _floor_special(FloorType.FLEV_RAISETIMES8INSTANT),
+    68: _floor_special(FloorType.FLEV_MOVETOVALUETIMES8),
+    95: special_floor_and_ceiling_lower_by_value,
+    96: special_floor_and_ceiling_raise_by_value,
     138: special_floor_waggle,
 }

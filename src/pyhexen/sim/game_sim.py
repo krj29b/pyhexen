@@ -53,6 +53,9 @@ class GameSim:
         self.deathmatch: bool = deathmatch
         self.nomonsters: bool = nomonsters
         self.tid_map: dict[int, list[Mobj]] = {}
+        # activeceilings[MAXCEILINGS] and activeplats[MAXPLATS] (p_ceilng.c, p_plats.c).
+        self.active_ceilings: list[Any] = [None] * 30
+        self.active_plats: list[Any] = [None] * 30
         self.tagged_lines: dict[int, list[Line]] = {}
         self.player_starts: dict[tuple[int, int], MapThing] = {}
         self.deathmatch_starts: list[MapThing] = []

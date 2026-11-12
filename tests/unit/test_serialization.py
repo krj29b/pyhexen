@@ -16,11 +16,12 @@ from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.mobj import Mobj, spawn_map_things
 from pyhexen.sim.player import PlayerClass, spawn_player
 from pyhexen.sim.polyobj import ev_rotate_poly, get_polyobj
+from pyhexen.sim.specials.ceilings import CeilingMove, CeilingType, add_active_ceiling
 from pyhexen.sim.specials.doors import DoorType, VerticalDoor
-from pyhexen.sim.specials.floors import FloorMove, FloorWaggle
+from pyhexen.sim.specials.floors import FloorMove, FloorType, FloorWaggle
 from pyhexen.sim.specials.lights import Light, LightType
 from pyhexen.sim.specials.pillars import Pillar
-from pyhexen.sim.specials.plats import Plat
+from pyhexen.sim.specials.plats import Plat, PlatStatus, PlatType, add_active_plat
 from pyhexen.sim.specials.scroll import ScrollThinker
 from pyhexen.sim.specials.sector_specials import PhasedLightThinker
 from pyhexen.sim.specials.switches import ButtonThinker, SwitchWhere
@@ -202,8 +203,24 @@ def test_special_movers_serialization() -> None:
     sim.thinkers.add(door)
 
     # Add floor move
-    fm = FloorMove(sec, speed=FRACUNIT, dest=64 * FRACUNIT, direction=1, crush=10)
+    fm = FloorMove(
+        sec,
+        speed=FRACUNIT,
+        dest=64 * FRACUNIT,
+        direction=1,
+        crush=10,
+        floor_type=FloorType.FLEV_RAISEBUILDSTEP,
+    )
+    fm.reset_height, fm.reset_delay, fm.reset_delay_count = 8 * FRACUNIT, 30, 12
+    fm.delay_count, fm.delay_total = 3, 7
+    fm.stairs_delay_height, fm.stairs_delay_height_delta = 16 * FRACUNIT, 8 * FRACUNIT
     sim.thinkers.add(fm)
+
+    # Add ceiling
+    cm = CeilingMove(sec, CeilingType.CLEV_CRUSHANDRAISE, speed=2 * FRACUNIT)
+    cm.topheight, cm.bottomheight, cm.direction, cm.crush = 128 * FRACUNIT, 8 * FRACUNIT, -1, 5
+    add_active_ceiling(sim, cm)
+    sim.thinkers.add(cm)
 
     # Add floor waggle
     fw = FloorWaggle(sec, original_height=0, acc_delta=8 << 10, target_scale=16 << 10)
@@ -212,19 +229,23 @@ def test_special_movers_serialization() -> None:
     sim.thinkers.add(fw)
 
     # Add plat
-    plat = Plat(sec, speed=3 * FRACUNIT, low=0, high=128 * FRACUNIT, direction=-1, wait=105)
+    plat = Plat(sec, PlatType.PLAT_PERPETUALRAISE, speed=3 * FRACUNIT, tag=7)
+    plat.low, plat.high, plat.wait = 0, 128 * FRACUNIT, 105
     plat.count = 42
+    plat.status = PlatStatus.PLAT_WAITING
+    add_active_plat(sim, plat)
     sim.thinkers.add(plat)
 
     # Add pillar
     pil = Pillar(
         sec,
-        speed=2 * FRACUNIT,
+        floor_speed=2 * FRACUNIT,
+        ceiling_speed=FRACUNIT,
         floordest=32 * FRACUNIT,
         ceilingdest=64 * FRACUNIT,
-        crush=0,
+        direction=-1,
+        crush=3,
     )
-    pil.floor_done = True
     sim.thinkers.add(pil)
 
     # Add lights
@@ -274,6 +295,13 @@ def test_special_movers_serialization() -> None:
 
     restored_plat = next(t for t in sim2.thinkers if isinstance(t, Plat))
     assert restored_plat.count == 42
+
+    # Every mover field survives, and plats and ceilings are back in the active lists.
+    for original in (fm, cm, plat, pil):
+        restored = next(t for t in sim2.thinkers if type(t) is type(original))
+        assert restored.state_tuple() == original.state_tuple()
+    assert sim2.active_plats[0] is restored_plat and sim2.active_plats[1] is None
+    assert isinstance(sim2.active_ceilings[0], CeilingMove) and sim2.active_ceilings[1] is None
 
     restored_btn = next(t for t in sim2.thinkers if isinstance(t, ButtonThinker))
     assert restored_btn.btexture == "SW1ON"
@@ -362,3 +390,35 @@ def test_roundtrip_state_hash_and_determinism() -> None:
         sim1.tick()
         sim2.tick()
         assert sim1.state_hash() == sim2.state_hash()
+
+
+def test_movers_from_saves_before_t15_8_still_load() -> None:
+    """Older saves have fewer mover fields; the movers continue with sensible defaults."""
+    from pyhexen.sim.serialization import _restore_special_thinker
+
+    _, sim, _ = _build_test_sim_with_poly()
+    old_entries = [
+        {"type": "FloorMove", "sector_index": 0, "speed": FRACUNIT, "dest": 64 * FRACUNIT,
+         "direction": 1, "crush": 0},
+        {"type": "CeilingMove", "sector_index": 0, "speed": FRACUNIT, "topheight": 128 * FRACUNIT,
+         "bottomheight": 8 * FRACUNIT, "direction": -1, "crush": 1, "repeat": True},
+        {"type": "Plat", "sector_index": 0, "speed": FRACUNIT, "low": 0, "high": 64 * FRACUNIT,
+         "direction": 0, "wait": 105, "count": 42},
+        {"type": "Pillar", "sector_index": 0, "speed": 2 * FRACUNIT, "floordest": 32 * FRACUNIT,
+         "ceilingdest": 32 * FRACUNIT, "crush": 0, "floor_done": False, "ceiling_done": False},
+    ]  # fmt: skip
+    floor, ceiling, plat, pillar = (
+        _restore_special_thinker(sim, entry["type"], entry) for entry in old_entries
+    )
+    assert (floor.speed, floor.floordestheight, floor.direction) == (FRACUNIT, 64 * FRACUNIT, 1)
+    assert floor.reset_delay == 0 and floor.delay_count == 0
+    assert ceiling.type == CeilingType.CLEV_CRUSHANDRAISE  # was `repeat`
+    assert (ceiling.direction, ceiling.bottomheight) == (-1, 8 * FRACUNIT)
+    assert sim.active_ceilings[0] is ceiling
+    assert (plat.status, plat.count, plat.high) == (PlatStatus.PLAT_WAITING, 42, 64 * FRACUNIT)
+    assert sim.active_plats[0] is plat
+    assert (pillar.floor_speed, pillar.ceiling_speed, pillar.direction) == (
+        2 * FRACUNIT,
+        2 * FRACUNIT,
+        1,
+    )

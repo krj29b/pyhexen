@@ -104,39 +104,33 @@ Task details and acceptance criteria are in `IMPLEMENTATION_PLAN.md` §7.
 | T15.6b | Port the Heresiarch (A_Sorc*, ball orbit, stopping, spells) from p_enemy.c | T15.6 | TODO | DEMO2 diverges at tic 3 on the spinning balls. `A_SorcBallOrbit` and friends are a loose reimplementation: no SORC_STOPPING / FIRESPELL / FIRING_SPELL handling, no rotation counter or woosh sound, a different stop test |
 | T15.6c | Continue DEMO3 sync from tic 171 | T15.6 | TODO | At tic 171 vanilla makes one more P_Random call and has one more mobj. Record dumps with `record_traces.py --dump 170,171 DEMO3` and diff with `python -m pyhexen.tools.demo_sync --dump 171 DEMO3` |
 | T15.6d | Renderer shows the sim's surface animation, sky scroll and lightning | T15.6 | TODO | `Renderer.tick` is never called in the running game, so animated flats/textures, sky scrolling and lightning are frozen on screen. The renderer also keeps its own copies (`TextureManager.update_animations`, `sky.LightningState`). Read the sim's `surface_animator` instead (sequence frames hold ANIMDEFS pic numbers; `sky_flash`, sky column offsets; lightning already changes sector light levels) and delete the copies |
-| T15.8 | Port the 35 line specials that have no handler | T15.6a | IN PROGRESS (Claude/2026-11-12) | Found in T15.6a: P_ExecuteLineSpecial has 81 cases and `execute_line_special` silently returns False for 35 of them: 21, 22, 24, 25 (floor lower/raise to lowest/nearest/highest), 26, 27, 31, 32 (stairs; DEMO1 diverges at tic 420 on 26), 28, 35, 36, 46, 66, 67, 68, 95, 96 (other floor specials), 43, 44, 45, 69 (ceiling crushers and move), 60, 61, 63, 64, 65 (plats), 30, 94 (pillars), 120 (Radius_Quake), 129 (UsePuzzleItem), 133-137 (Thing_Destroy, Thing_Projectile, Thing_Spawn, Thing_ProjectileGravity, Thing_SpawnNoFog). Port them from p_spec.c, p_floor.c (EV_DoFloor types, EV_BuildStairs with ProcessStairSector), p_ceilng.c, p_plats.c and p_things.c, and review the existing FloorMove / CeilingMove / Plat / Pillar thinkers against T_MoveFloor, T_MoveCeiling, T_PlatRaise and T_BuildPillar while there. Add a test that every vanilla case has a handler |
+| T15.6e | Player steps up onto low things (P_CheckOnmobj path) | T15.8 | TODO | DEMO1 diverges at tic 704: vanilla lifts the player from z -128 to -111, onto a dying MT_ETTIN (height 17, at about 202,1830 on MAP03) that the player's box overlaps during the move; ours stays on the floor. x/y, RNG and sectors still match. Check P_TryMove's BlockingMobj step-up (thing top within 24 units) and the MF2_PASSMOBJ branch of P_MobjThinker (P_CheckOnmobj, MF2_ONMOBJ, viewheight) in `sim/map.py` and `sim/movement.py` against p_map.c and p_mobj.c |
+| T15.8 | Port the 35 line specials that have no handler | T15.6a | DONE (Claude/2026-11-12) | All 81 cases of P_ExecuteLineSpecial have a handler (`tests/unit/test_line_specials.py` checks the list, and compares it with `reference/` when fetched). `floors.py`: EV_DoFloor (all floor_e types), EV_DoFloorAndCeiling, EV_BuildStairs with ProcessStairSector, EV_FloorCrushStop, T_MoveFloor (stair delay and reset). `ceilings.py`: EV_DoCeiling, T_MoveCeiling, EV_CeilingCrushStop. `plats.py`: EV_DoPlat, T_PlatRaise, EV_StopPlat. `pillars.py`: EV_BuildPillar, EV_OpenPillar, T_BuildPillar. New `things.py`: p_things.c, A_LocalQuake (120), EV_LineSearchForPuzzleItem (129), DamageThing (73) through P_DamageMobj. `sim.active_ceilings` / `sim.active_plats` are vanilla's 30-slot arrays (cleared in P_SpawnSpecials, refilled on load). **Kept vanilla quirks:** Floor_MoveToValueTimes8 to the current height leaves a thinker with direction 0 forever; Plat_Stop ignores the tag and removes the first active plat; a 31st ceiling never ends; a 31st plat and more than 31 queued stair sectors raise (I_Error in vanilla). **Deviations:** Plat_Stop on an empty slot returns (vanilla dereferences NULL); a thing type past TranslateThingType fails; ArtifactFlash for special 129 is not set (UI state). ACS LSPEC arguments are now truncated to bytes like `SpecArgs`. Old saves load (movers keep going with defaults for the new fields). **Follow-ups:** T15.6e (new DEMO1 divergence at tic 704); ACS `SpecArgs` is static in vanilla, so LSPEC1-4 leave stale values in the unused arguments (we pass 0); P_FindMobjFromTID walks one global TID list that reuses freed slots, while `sim.tid_map` keeps insertion order per TID |
 | T15.7 | Real playthrough checklist per class, hub by hub; **Milestone M6** | T15.1, T15.2, T15.3 | TODO | Replaces the T14.5 smoke run; file bugs as `T15.7.x` |
-| S1 | Vanilla demo sync | T14.1, T14.5 | BLOCKED (T15.6b-c, T15.8: demos diverge) | **T15.6:** sync is now measured tic by tic against Chocolate Hexen (`python -m pyhexen.tools.demo_sync`); first divergences at DEMO1 tic 420 (missing stairs special, T15.8), DEMO2 tic 3, DEMO3 tic 171. **Audit:** demos parse and run without crashing, but vanilla demos have no state hash, so "determinism passed" proved nothing. Original notes: `sim/demo.py` (`VanillaDemoHeader`, `VanillaDemo`, `decode_vanilla_demo`, `encode_vanilla_demo`, `Demo.from_vanilla`), lump resolution in `DemoPlayer.from_file`, CLI `--playdemo`/`--timedemo` support; 4 unit tests in `tests/unit/test_demo.py`, 4 IWAD tests in `tests/wad/test_vanilla_demos.py` playing DEMO1 (968 tics), DEMO2 (2619 tics), DEMO3 (2404 tics) to completion |
+| S1 | Vanilla demo sync | T14.1, T14.5 | BLOCKED (T15.6b-c, T15.6e: demos diverge) | **T15.6:** sync is now measured tic by tic against Chocolate Hexen (`python -m pyhexen.tools.demo_sync`); first divergences at DEMO1 tic 704 (step onto a low thing, T15.6e; was tic 420 before T15.8), DEMO2 tic 3, DEMO3 tic 171. **Audit:** demos parse and run without crashing, but vanilla demos have no state hash, so "determinism passed" proved nothing. Original notes: `sim/demo.py` (`VanillaDemoHeader`, `VanillaDemo`, `decode_vanilla_demo`, `encode_vanilla_demo`, `Demo.from_vanilla`), lump resolution in `DemoPlayer.from_file`, CLI `--playdemo`/`--timedemo` support; 4 unit tests in `tests/unit/test_demo.py`, 4 IWAD tests in `tests/wad/test_vanilla_demos.py` playing DEMO1 (968 tics), DEMO2 (2619 tics), DEMO3 (2404 tics) to completion |
 | S2 | Multiplayer | T14.1 | TODO | Lockstep TicCmd exchange over UDP/sockets |
 | S3 | Deathkings expansion | T14.5 | TODO | Support and PWAD loading for Deathkings of the Dark Citadel |
 | S4 | Mod & PWAD support | T2.6, T8.1 | TODO | Custom MAPINFO/ACS PWAD support |
 | S5 | Visual extras | T14.2 | TODO | Dynamic lights, optional smooth filtering, widescreen status bar |
 
-## Next session (handoff, 2026-11-12)
+## Next session (handoff, 2026-11-12, after T15.8)
 
-**Start with T15.8** (port the 35 missing line specials). It blocks DEMO1 sync and real
-gameplay: stairs, many floor/ceiling/plat/pillar specials, Radius_Quake, UsePuzzleItem and
-the Thing_Spawn family currently do nothing (`execute_line_special` returns False).
+**Start with T15.6e** (player steps up onto low things). It is the next DEMO1 divergence
+(tic 704) and affects normal play: walking over corpses and other things up to 24 units high.
+At tic 704 vanilla puts the player on top of a dying ettin (z -128 -> -111); ours stays on
+the floor. Compare P_TryMove's BlockingMobj branch and the MF2_PASSMOBJ branch of
+P_MobjThinker (P_CheckOnmobj) with `sim/map.py` and `sim/movement.py`.
 
-Suggested order:
-1. Add the guard test first: every `case` in vanilla `P_ExecuteLineSpecial` (p_spec.c) has a
-   handler. A quick check (it found the 35) parses the cases from `reference/src/hexen/p_spec.c`
-   and compares them with `dispatcher._HANDLERS` after `_sync_sibling_handlers()`.
-2. `EV_BuildStairs` + `ProcessStairSector` (p_floor.c; specials 26, 27, 31, 32). DEMO1 needs 26
-   at tic 420 (MAP03 script 2: `Stairs_BuildDown(3, 8, 16, 0, 0)`).
-3. The rest of `EV_DoFloor` (21, 22, 24, 25, 28, 35, 36, 46, 66, 67, 68, 95, 96), then
-   ceilings (43, 44, 45, 69), plats (60, 61, 63-65), pillars (30, 94), p_things.c (133-137),
-   120 and 129.
-4. While there, review `FloorMove`, `CeilingMove`, `Plat`, `Pillar` against T_MoveFloor,
-   T_MoveCeiling, T_PlatRaise, T_BuildPillar. They are simplified like the doors and waggle
-   were; `t_move_plane` (T15.6a) is now faithful, so their RES_CRUSHED handling matters.
-5. Check sync after each step:
-   `uv run python -m pyhexen.tools.demo_sync --iwad <IWAD>`; then raise `SYNCED_TICS_V10` in
-   `tests/wad/test_vanilla_demos.py`.
+Then: T15.6b (Heresiarch, DEMO2 tic 3), T15.6c (DEMO3 tic 171, undiagnosed), T15.6d (renderer
+shows sim animations), T15.7 (playthrough, M6).
 
-Current sync (v1.0 IWAD): DEMO1 419 / 968 tics (stairs, T15.8), DEMO2 2 / 2619 (Heresiarch,
-T15.6b), DEMO3 170 / 2404 (undiagnosed, T15.6c). Other open tasks: T15.6d (renderer shows sim
-animations), T15.7 (playthrough, M6).
+Current sync (v1.0 IWAD): DEMO1 703 / 968 tics (T15.6e), DEMO2 2 / 2619 (T15.6b), DEMO3
+170 / 2404 (T15.6c). Check after each fix with
+`uv run python -m pyhexen.tools.demo_sync --iwad <IWAD>`, then raise `SYNCED_TICS_V10` in
+`tests/wad/test_vanilla_demos.py`.
+
+Smaller vanilla differences noted in T15.8, not yet tasks: ACS LSPEC1-4 leave stale values
+in the unused `SpecArgs` bytes; P_FindMobjFromTID order when TID slots are reused.
 
 **Demo-sync workflow** (ADR-011): traces live in gitignored `out/demo_traces/` and must be
 re-recorded after changing `tools/demo_trace/pyh_trace.c`. Start Docker Desktop, then
@@ -192,3 +186,4 @@ functions (e.g. `find_sectors_from_tag`, `try_move`) for one tic.
 - 2026-11-11 · Claude · T15.5 · Save management moved to app/savegame.py, unused sync_menu removed, layering test added (no upper-layer imports under sim/world/wad/core). 1035 passed with the real IWAD.
 - 2026-11-12 · Claude · T15.6 · Demo-sync harness: Chocolate Hexen trace build in Docker, per-tic traces and mobj dumps, `pyhexen.tools.demo_sync`; empty hash no longer passes. Fixed 15 sim divergences it found (spawn order, P_TryMove, P_Move, friction, attacks, ANIMDEFS/lightning in the sim, ...). In sync for 419/2/170 tics of DEMO1-3; remaining divergences filed as T15.6a-d. 1054 passed with the real IWAD.
 - 2026-11-12 · Claude · T15.6a · P_ChangeSector / P_ThingHeightClip ported and used by a faithful T_MovePlane; floor waggle and doors ported; tag 0 matches untagged sectors; sector hash added to demo traces. Found that 35 of 81 line specials had no handler (filed T15.8; DEMO1 now stops on Stairs_BuildDown at tic 420). 1065 passed with the real IWAD.
+- 2026-11-12 · Claude · T15.8 · The 35 missing line specials ported (stairs, all EV_DoFloor / EV_DoCeiling / EV_DoPlat types, pillars, crush stops, Radius_Quake, UsePuzzleItem, Thing_Destroy/Projectile/Spawn) and the floor, ceiling, plat and pillar thinkers rewritten from T_MoveFloor, T_MoveCeiling, T_PlatRaise and T_BuildPillar; Thing_Activate/Deactivate/Remove and DamageThing now follow p_things.c / P_DamageMobj; ACS special arguments truncated to bytes. DEMO1 in sync for 703 tics (was 419); next divergence filed as T15.6e. 1118 passed with the real IWAD.

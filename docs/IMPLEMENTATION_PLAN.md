@@ -830,6 +830,8 @@ against reference traces, or the first divergence is filed as a task.
 
 **T15.6d Renderer reads sim animation state**: draw animated surfaces, sky scrolling and lightning from `sim.surface_animator`, and remove the renderer's own copies. Accept: animated flats and the sky move in the running game; the renderer never touches the sim RNG.
 
+**T15.6e Player steps up onto low things**: port the BlockingMobj step-up in P_TryMove (p_map.c) and the MF2_PASSMOBJ branch of P_MobjThinker with P_CheckOnmobj (p_mobj.c), so a player walks onto things up to 24 units high. Accept: DEMO1 stays in sync past tic 704.
+
 **T15.8 Missing line specials**: port the 35 specials that P_ExecuteLineSpecial handles and PyHexen does not (stairs, floor/ceiling/plat/pillar variants, Radius_Quake, UsePuzzleItem, Thing_Spawn/Projectile/Destroy), and review the existing mover thinkers against p_floor.c, p_ceilng.c and p_plats.c. Accept: a test checks every vanilla case has a handler; DEMO1 stays in sync past tic 420.
 
 **T15.7 Real playthrough checklist**: replace the 35-tic smoke run in

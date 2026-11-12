@@ -37,6 +37,8 @@ def remove_all_thinkers(sim: GameSim) -> None:
                 unset_thing_position(sim.level, thinker)
     sim.thinkers.clear()
     sim.tid_map.clear()
+    sim.active_ceilings = [None] * len(sim.active_ceilings)
+    sim.active_plats = [None] * len(sim.active_plats)
 
 
 class HubManager:

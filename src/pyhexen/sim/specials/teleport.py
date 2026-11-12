@@ -25,7 +25,7 @@ from pyhexen.core.fixed import (
 )
 from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum
 from pyhexen.sim.map import teleport_move
-from pyhexen.sim.mobj import remove_mobj, spawn_mobj
+from pyhexen.sim.mobj import spawn_mobj
 from pyhexen.sim.player import PW_FLIGHT, PW_SPEED
 from pyhexen.sim.sound import start_sound
 from pyhexen.sim.transitions import teleport_end_game, teleport_new_map
@@ -197,63 +197,9 @@ def special_teleport_end_game(
     return teleport_end_game(sim)
 
 
-def special_thing_activate(
-    sim: GameSim,
-    special: int,
-    args: Sequence[int],
-    line: Any,
-    mo: Any,
-) -> bool:
-    """Line special 130 (Thing_Activate)."""
-    _ = (special, line, mo)
-    tid = args[0] if len(args) > 0 else 0
-    targets = sim.find_mobjs_by_tid(tid)
-    for t in targets:
-        t.flags2 &= ~MobjFlag2.MF2_DORMANT
-        if t.tics == -1:
-            t.tics = 1
-    return True
-
-
-def special_thing_deactivate(
-    sim: GameSim,
-    special: int,
-    args: Sequence[int],
-    line: Any,
-    mo: Any,
-) -> bool:
-    """Line special 131 (Thing_Deactivate)."""
-    _ = (special, line, mo)
-    tid = args[0] if len(args) > 0 else 0
-    targets = sim.find_mobjs_by_tid(tid)
-    for t in targets:
-        t.flags2 |= MobjFlag2.MF2_DORMANT
-        t.tics = -1
-    return True
-
-
-def special_thing_remove(
-    sim: GameSim,
-    special: int,
-    args: Sequence[int],
-    line: Any,
-    mo: Any,
-) -> bool:
-    """Line special 132 (Thing_Remove)."""
-    _ = (special, line, mo)
-    tid = args[0] if len(args) > 0 else 0
-    targets = sim.find_mobjs_by_tid(tid)
-    for t in targets:
-        remove_mobj(sim, t)
-    return True
-
-
 SPECIAL_HANDLERS: dict[int, Any] = {
     70: special_teleport,
     71: special_teleport,
     74: special_teleport_new_map,
     75: special_teleport_end_game,
-    130: special_thing_activate,
-    131: special_thing_deactivate,
-    132: special_thing_remove,
 }

@@ -18,7 +18,7 @@ from pyhexen.sim.acs.loader import (
 from pyhexen.sim.acs.pcodes import PCode
 from pyhexen.sim.acs.vm import ACSVM
 from pyhexen.sim.game_sim import GameSim
-from pyhexen.sim.info_data import MobjType
+from pyhexen.sim.info_data import MobjFlag, MobjType
 from pyhexen.sim.mobj import Mobj, spawn_mobj
 from pyhexen.sim.player import Player
 from pyhexen.sim.specials.dispatcher import execute_line_special
@@ -468,7 +468,15 @@ class TestACSGamePCodes:
         vm = ACSVM(behavior)
         sim.acs_vm = vm
 
-        target_mo = Mobj(type=MobjType.MT_PLAYER_FIGHTER, x=0, y=0, z=0, health=200)
+        # DamageThing goes through P_DamageMobj, which only hurts shootable things.
+        target_mo = Mobj(
+            type=MobjType.MT_PLAYER_FIGHTER,
+            x=0,
+            y=0,
+            z=0,
+            health=200,
+            flags=MobjFlag.MF_SHOOTABLE,
+        )
         script = vm.start_script(1, activator=target_mo, sim=sim)
         assert script is not None
 

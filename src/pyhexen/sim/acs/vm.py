@@ -460,7 +460,7 @@ class ACSVM:
                 special = read_int()
                 args = [0, 0, 0, 0, 0]
                 for i in range(count - 1, -1, -1):
-                    args[i] = pop()
+                    args[i] = pop() & 0xFF  # SpecArgs is a byte array (p_acs.c)
                 execute_line_special(
                     sim,
                     special,
@@ -472,7 +472,7 @@ class ACSVM:
             elif PCode.PCD_LSPEC1DIRECT <= cmd <= PCode.PCD_LSPEC5DIRECT:
                 count = cmd - PCode.PCD_LSPEC1DIRECT + 1
                 special = read_int()
-                args = [read_int() for _ in range(count)]
+                args = [read_int() & 0xFF for _ in range(count)]
                 while len(args) < 5:
                     args.append(0)
                 execute_line_special(

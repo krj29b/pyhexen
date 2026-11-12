@@ -26,12 +26,17 @@ from pyhexen.sim.polyobj import (
     Polyobj,
     RotatePolyThinker,
 )
-from pyhexen.sim.specials.ceilings import CeilingMove
+from pyhexen.sim.specials.ceilings import (
+    MAXCEILINGS,
+    CeilingMove,
+    CeilingType,
+    add_active_ceiling,
+)
 from pyhexen.sim.specials.doors import DoorType, VerticalDoor
 from pyhexen.sim.specials.floors import FloorMove, FloorWaggle
 from pyhexen.sim.specials.lights import Light, LightType
 from pyhexen.sim.specials.pillars import Pillar
-from pyhexen.sim.specials.plats import Plat
+from pyhexen.sim.specials.plats import MAXPLATS, Plat, PlatStatus, PlatType, add_active_plat
 from pyhexen.sim.specials.scroll import ScrollThinker
 from pyhexen.sim.specials.sector_specials import PhasedLightThinker
 from pyhexen.sim.specials.switches import ButtonThinker, SwitchWhere
@@ -198,6 +203,8 @@ def deserialize_sim(sim: GameSim, state: dict[str, Any]) -> None:
     # 5. Clear thinkers, spatial links, and player list
     sim.thinkers.clear()
     sim.tid_map.clear()
+    sim.active_ceilings = [None] * MAXCEILINGS
+    sim.active_plats = [None] * MAXPLATS
     if state.get("players"):
         sim.players.clear()
 
@@ -301,6 +308,7 @@ def _restore_special_thinker(
                 entry.get("direction", 1),
                 entry.get("crush", 0),
             )
+            fm.load_fields(entry)
             sec.special_data = fm
             return fm
 
@@ -317,47 +325,42 @@ def _restore_special_thinker(
         sec_idx = entry.get("sector_index", -1)
         if 0 <= sec_idx < len(sim.level.sectors):
             sec = sim.level.sectors[sec_idx]
-            cm = CeilingMove(
-                sec,
-                entry.get("speed", 0),
-                entry.get("topheight", 0),
-                entry.get("bottomheight", 0),
-                entry.get("direction", 1),
-                entry.get("crush", 0),
-                entry.get("repeat", False),
+            # Saves from before T15.8 have `repeat` instead of the ceiling type.
+            old_type = (
+                CeilingType.CLEV_CRUSHANDRAISE
+                if entry.get("repeat", False)
+                else CeilingType.CLEV_LOWERBYVALUE
             )
+            cm = CeilingMove(sec, entry.get("ceiling_type", old_type))
+            cm.load_fields(entry)
             sec.special_data = cm
+            add_active_ceiling(sim, cm)  # as RestoreSSThinker / P_AddActiveCeiling (sv_save.c)
             return cm
 
     elif t_type == "Plat":
         sec_idx = entry.get("sector_index", -1)
         if 0 <= sec_idx < len(sim.level.sectors):
             sec = sim.level.sectors[sec_idx]
-            plat = Plat(
-                sec,
-                entry.get("speed", 0),
-                entry.get("low", 0),
-                entry.get("high", 0),
-                entry.get("direction", -1),
-                entry.get("wait", 0),
-            )
-            plat.count = entry.get("count", 0)
+            plat = Plat(sec, entry.get("plat_type", PlatType.PLAT_DOWNWAITUPSTAY))
+            plat.load_fields(entry)
+            if "status" not in entry:
+                # Saves from before T15.8 store a direction (-1 down, 0 waiting, 1 up).
+                plat.tag = sec.tag
+                plat.status = {
+                    -1: PlatStatus.PLAT_DOWN,
+                    0: PlatStatus.PLAT_WAITING,
+                    1: PlatStatus.PLAT_UP,
+                }[int(entry.get("direction", -1))]
             sec.special_data = plat
+            add_active_plat(sim, plat)  # as RestoreSSThinker / P_AddActivePlat (sv_save.c)
             return plat
 
     elif t_type == "Pillar":
         sec_idx = entry.get("sector_index", -1)
         if 0 <= sec_idx < len(sim.level.sectors):
             sec = sim.level.sectors[sec_idx]
-            pil = Pillar(
-                sec,
-                entry.get("speed", 0),
-                entry.get("floordest", 0),
-                entry.get("ceilingdest", 0),
-                entry.get("crush", 0),
-            )
-            pil.floor_done = entry.get("floor_done", False)
-            pil.ceiling_done = entry.get("ceiling_done", False)
+            pil = Pillar(sec)
+            pil.load_fields(entry)
             sec.special_data = pil
             return pil
 

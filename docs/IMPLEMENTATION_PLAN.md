@@ -826,7 +826,7 @@ against reference traces, or the first divergence is filed as a task.
 
 **T15.6b Heresiarch port**: port the A_Sorc* actions (ball orbit, speed changes, stopping, spell casting) from p_enemy.c. Accept: DEMO2 stays in sync past tic 3.
 
-**T15.6c DEMO3 sync**: find and fix the divergence at DEMO3 tic 171, then continue. Accept: DEMO3 stays in sync past tic 171.
+**T15.6c DEMO3 sync**: find and fix the divergence at DEMO3 tic 292 (it was tic 171 before T15.6e), then continue. Accept: DEMO3 stays in sync past tic 292.
 
 **T15.6d Renderer reads sim animation state**: draw animated surfaces, sky scrolling and lightning from `sim.surface_animator`, and remove the renderer's own copies. Accept: animated flats and the sky move in the running game; the renderer never touches the sim RNG.
 

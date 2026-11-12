@@ -31,9 +31,10 @@ from pyhexen.wad.wadfile import WadStack
 
 TRACE_DIR = Path(__file__).resolve().parents[2] / "out" / "demo_traces"
 HEXEN_V10_MD5 = "b2543a03521365261d0a0f74d5dd90f0"
-# Tics in sync with Chocolate Hexen on the v1.0 IWAD as of T15.8 (DEMO1 stops where the
-# player should step up onto a dying ettin, T15.6e). Raise these as divergences are fixed.
-SYNCED_TICS_V10 = {"DEMO1": 703, "DEMO2": 2, "DEMO3": 170}
+# Tics in sync with Chocolate Hexen on the v1.0 IWAD as of T15.6e. DEMO1 is in sync to the
+# end; DEMO2 stops on the Heresiarch (T15.6b) and DEMO3 at tic 292 (T15.6c). Raise these as
+# divergences are fixed.
+SYNCED_TICS_V10 = {"DEMO1": 968, "DEMO2": 2, "DEMO3": 291}
 DEMO_LENGTHS = {"DEMO1": 968, "DEMO2": 2619, "DEMO3": 2404}
 
 

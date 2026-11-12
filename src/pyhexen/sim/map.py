@@ -524,10 +524,14 @@ def teleport_move(sim: GameSim, thing: Mobj, x: int, y: int, boss: bool = False)
 
 
 def check_on_mobj(sim: GameSim, thing: Mobj) -> Mobj | None:
-    """Return the solid `Mobj` directly supporting `thing` from below, or `None`.
+    """Return the solid `Mobj` that `thing` would rest on or bump into after its Z move.
 
-    Port of P_CheckOnmobj (p_map.c).
+    Port of P_CheckOnmobj and PIT_CheckOnmobjZ (p_map.c). The Z move is faked with
+    P_FakeZMovement and undone afterwards. Like vanilla, a MF_NOCLIP thing returns
+    early and keeps the faked move.
     """
+    from pyhexen.sim.movement import p_fake_z_movement
+
     level = sim.level
     if level is None:
         return None
@@ -537,10 +541,9 @@ def check_on_mobj(sim: GameSim, thing: Mobj) -> Mobj | None:
     y = thing.y
     st.tmthing = thing
     st.tmflags = thing.flags
-    oldz = thing.z
-    thing.z += thing.momz
-    if thing.z > thing.floorz:
-        thing.z -= FRACUNIT
+    oldz = thing.z  # save the old mobj before the fake zmovement
+    oldmomz = thing.momz
+    p_fake_z_movement(sim, thing)
 
     st.tmx = x
     st.tmy = y
@@ -549,7 +552,21 @@ def check_on_mobj(sim: GameSim, thing: Mobj) -> Mobj | None:
     st.tmbox[BOXRIGHT] = x + thing.radius
     st.tmbox[BOXLEFT] = x - thing.radius
 
+    newsubsec = level.point_in_subsector(x, y)
+    st.ceilingline = None
+
+    st.tmfloorz = newsubsec.sector.floor_height
+    st.tmdropoffz = st.tmfloorz
+    st.tmceilingz = newsubsec.sector.ceiling_height
+    st.tmfloorpic = newsubsec.sector.floor_pic
+
     bm = level.blockmap
+    bm.next_valid_count()
+    st.spechit.clear()
+
+    if st.tmflags & MobjFlag.MF_NOCLIP:
+        return None
+
     xl = (st.tmbox[BOXLEFT] - bm.org_x - MAXRADIUS) >> MAPBLOCKSHIFT
     xh = (st.tmbox[BOXRIGHT] - bm.org_x + MAXRADIUS) >> MAPBLOCKSHIFT
     yl = (st.tmbox[BOXBOTTOM] - bm.org_y - MAXRADIUS) >> MAPBLOCKSHIFT
@@ -560,16 +577,16 @@ def check_on_mobj(sim: GameSim, thing: Mobj) -> Mobj | None:
     def _pit_check_onmobj(other: Mobj) -> bool:
         nonlocal found
         if not (other.flags & (MobjFlag.MF_SOLID | MobjFlag.MF_SPECIAL | MobjFlag.MF_SHOOTABLE)):
-            return True
+            return True  # Can't hit thing
         blockdist = other.radius + thing.radius
         if abs32(other.x - x) >= blockdist or abs32(other.y - y) >= blockdist:
-            return True
+            return True  # Didn't hit thing
         if other is thing:
-            return True
+            return True  # Don't clip against self
         if thing.z > other.z + other.height:
             return True
         if thing.z + thing.height < other.z:
-            return True
+            return True  # under thing
         if other.flags & MobjFlag.MF_SOLID:
             found = other
             return False
@@ -579,9 +596,11 @@ def check_on_mobj(sim: GameSim, thing: Mobj) -> Mobj | None:
         for by in range(yl, yh + 1):
             if not bm.block_things_iterator(bx, by, _pit_check_onmobj):
                 thing.z = oldz
+                thing.momz = oldmomz
                 return found
 
     thing.z = oldz
+    thing.momz = oldmomz
     return None
 
 

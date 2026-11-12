@@ -75,6 +75,93 @@ def explode_missile(sim: GameSim, mo: Mobj) -> None:
         start_sound(sim, mo, int(mo.info.deathsound))
 
 
+def _xy_blocked_missile(sim: GameSim, mo: Mobj, blocking: Mobj | None) -> bool:
+    """The MF_MISSILE part of P_XYMovement's blocked-move branch (p_mobj.c).
+
+    Returns True where vanilla returns from P_XYMovement. After a plain explosion
+    vanilla does not return: the rest of the move is still tried with the dead missile.
+    """
+    from pyhexen.core.angles import ANG1, ANG45, point_to_angle2
+    from pyhexen.sim.map import BOUNCE_FRICTION, bounce_wall
+
+    if mo.flags2 & MobjFlag2.MF2_FLOORBOUNCE:
+        if blocking is not None:
+            if (blocking.flags2 & MobjFlag2.MF2_REFLECTIVE) or (
+                blocking.player is None and not (blocking.flags & MobjFlag.MF_COUNTKILL)
+            ):
+                angle = point_to_angle2(blocking.x, blocking.y, mo.x, mo.y)
+                angle = (angle + ANG1 * ((sim.rng.p_random() % 16) - 8)) & 0xFFFFFFFF
+                speed = fixed_mul(approx_distance(mo.momx, mo.momy), BOUNCE_FRICTION)
+                mo.angle = angle
+                fine = angle >> ANGLETOFINESHIFT
+                mo.momx = fixed_mul(speed, fine_cosine(fine))
+                mo.momy = fixed_mul(speed, fine_sine(fine))
+                if mo.info.seesound:
+                    start_sound(sim, mo, mo.info.seesound)
+                return True
+            explode_missile(sim, mo)  # Struck a player/creature
+        else:  # Struck a wall
+            bounce_wall(sim, mo)
+            if mo.type not in (
+                MobjType.MT_SORCBALL1,
+                MobjType.MT_SORCBALL2,
+                MobjType.MT_SORCBALL3,
+                MobjType.MT_SORCFX1,
+            ):
+                if mo.info.seesound:
+                    start_sound(sim, mo, mo.info.seesound)
+            return True
+
+    if blocking is not None and (blocking.flags2 & MobjFlag2.MF2_REFLECTIVE):
+        angle = point_to_angle2(blocking.x, blocking.y, mo.x, mo.y)
+        centaur = blocking.type in (MobjType.MT_CENTAUR, MobjType.MT_CENTAURLEADER)
+        explode = centaur and (
+            (abs(to_int32(angle) - to_int32(blocking.angle)) >> 24) > 45
+            or mo.type == MobjType.MT_HOLY_FX
+        )
+        if not explode:
+            # Change angle for deflection/reflection
+            if centaur or blocking.type == MobjType.MT_SORCBOSS:
+                # Deflection (a centaur drops through to the sorcerer's case)
+                if sim.rng.p_random() < 128:
+                    angle += ANG45
+                else:
+                    angle -= ANG45
+            else:
+                # Reflection
+                angle += ANG1 * ((sim.rng.p_random() % 16) - 8)
+            angle &= 0xFFFFFFFF
+            # Reflect the missile along angle
+            mo.angle = angle
+            fine = angle >> ANGLETOFINESHIFT
+            mo.momx = fixed_mul(mo.info.speed >> 1, fine_cosine(fine))
+            mo.momy = fixed_mul(mo.info.speed >> 1, fine_sine(fine))
+            if mo.flags2 & MobjFlag2.MF2_SEEKERMISSILE:
+                mo.special1 = mo.target
+            mo.target = blocking
+            return True
+
+    # explode: Explode a missile
+    ceilingline = sim.map_state.ceilingline
+    if (
+        ceilingline is not None
+        and ceilingline.back_sector is not None
+        and ceilingline.back_sector.ceiling_pic.startswith("F_SKY")
+    ):
+        # Hack to prevent missiles exploding against the sky
+        if mo.type == MobjType.MT_BLOODYSKULL:
+            mo.momx = 0
+            mo.momy = 0
+            mo.momz = -FRACUNIT
+        elif mo.type == MobjType.MT_HOLY_FX:
+            explode_missile(sim, mo)
+        else:
+            remove_mobj(sim, mo)
+        return True
+    explode_missile(sim, mo)
+    return False
+
+
 def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
     """Advance `mo` horizontally, handling half-step splitting, wall sliding, and friction.
 
@@ -114,16 +201,13 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
     ymove = mo.momy
 
     while True:
-        if (
-            xmove > MAXMOVE // 2
-            or ymove > MAXMOVE // 2
-            or xmove < -(MAXMOVE // 2)
-            or ymove < -(MAXMOVE // 2)
-        ):
+        # Only positive moves are split in two: vanilla Hexen tests `xmove > MAXMOVE / 2
+        # || ymove > MAXMOVE / 2`, so a fast move west or south is taken in one step.
+        if xmove > MAXMOVE // 2 or ymove > MAXMOVE // 2:
             ptryx = mo.x + c_div(xmove, 2)
             ptryy = mo.y + c_div(ymove, 2)
-            xmove = c_div(xmove, 2)
-            ymove = c_div(ymove, 2)
+            xmove >>= 1
+            ymove >>= 1
         else:
             ptryx = mo.x + xmove
             ptryy = mo.y + ymove
@@ -131,33 +215,20 @@ def p_xy_movement(sim: GameSim, mo: Mobj) -> None:
             ymove = 0
 
         if not try_move(sim, mo, ptryx, ptryy):
-            # Blocked move
-            if mo.flags2 & MobjFlag2.MF2_SLIDE:
-                if sim.map_state.blocking_mobj is None:
-                    slide_move(sim, mo)
+            blocking = sim.map_state.blocking_mobj
+            if mo.flags2 & MobjFlag2.MF2_SLIDE:  # Try to slide along it
+                if blocking is None:
+                    slide_move(sim, mo)  # Slide against wall
+                elif try_move(sim, mo, mo.x, ptryy):  # Slide against mobj
+                    mo.momx = 0
+                elif try_move(sim, mo, ptryx, mo.y):
+                    mo.momy = 0
                 else:
-                    if try_move(sim, mo, mo.x, ptryy):
-                        mo.momx = 0
-                    elif try_move(sim, mo, ptryx, mo.y):
-                        mo.momy = 0
-                    else:
-                        mo.momx = 0
-                        mo.momy = 0
+                    mo.momx = 0
+                    mo.momy = 0
             elif mo.flags & MobjFlag.MF_MISSILE:
-                ceilingline = sim.map_state.ceilingline
-                if (
-                    ceilingline is not None
-                    and ceilingline.back_sector is not None
-                    and ceilingline.back_sector.ceiling_pic.startswith("F_SKY")
-                ):
-                    if mo.type == MobjType.MT_BLOODSPLATTER:
-                        mo.momx = 0
-                        mo.momy = 0
-                        return
-                    remove_mobj(sim, mo)
+                if _xy_blocked_missile(sim, mo, blocking):
                     return
-                explode_missile(sim, mo)
-                return
             else:
                 mo.momx = 0
                 mo.momy = 0
@@ -544,8 +615,11 @@ def p_blaster_mobj_thinker(sim: GameSim, mobj: Mobj) -> None:
                     explode_missile(sim, mobj)
                     return
             mobj.z += zfrac
-            if mobj.z <= mobj.floorz:
+            if mobj.z <= mobj.floorz:  # Hit the floor
+                from pyhexen.sim.actions.monsters_common import hit_floor
+
                 mobj.z = mobj.floorz
+                hit_floor(sim, mobj)
                 explode_missile(sim, mobj)
                 return
             if mobj.z + mobj.height > mobj.ceilingz:
@@ -561,9 +635,12 @@ def p_blaster_mobj_thinker(sim: GameSim, mobj: Mobj) -> None:
                     from pyhexen.sim.mobj import spawn_mobj
 
                     spawn_mobj(sim, mobj.x, mobj.y, z, MobjType.MT_MWANDSMOKE)
-                elif mobj.type != MobjType.MT_MWAND_MISSILE:
-                    mobj.special1 = (mobj.special1 if isinstance(mobj.special1, int) else 0) - 1
-                    if mobj.special1 <= 0:
+                else:
+                    # `else if (!--mobj->special1.i)`: a wand missile whose roll failed
+                    # also counts down here, and only exactly 0 spawns a floor flame.
+                    count = mobj.special1 if isinstance(mobj.special1, int) else 0
+                    mobj.special1 = to_int32(count - 1)
+                    if mobj.special1 == 0:
                         mobj.special1 = 4
                         z = mobj.z - 12 * FRACUNIT
                         if z < mobj.floorz:

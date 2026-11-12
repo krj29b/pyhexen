@@ -21,7 +21,7 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.fixed import FRACUNIT, abs32, c_div, fixed_mul
+from pyhexen.core.fixed import FRACUNIT, MAXINT, abs32, c_div, fixed_mul
 from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum, StateNum
 from pyhexen.sim.maputl import (
     PT_ADDLINES,
@@ -58,6 +58,8 @@ if TYPE_CHECKING:
 MAXRADIUS: int = 32 * FRACUNIT
 STEPHEIGHT: int = 24 * FRACUNIT
 MAXSPECIALCROSS: int = 8
+# (fixed_t)(0.75 * FRACUNIT)
+BOUNCE_FRICTION: int = 49152
 
 
 @dataclass(slots=True)
@@ -105,6 +107,17 @@ def check_for_push_special(sim: GameSim, line: Line, side: int, mobj: Mobj) -> N
         sim.on_line_activated(line, mobj, SPAC_IMPACT)
 
 
+def _damage_blasted(sim: GameSim, thing: Mobj) -> None:
+    """`if (tmthing->flags2 & MF2_BLASTED) P_DamageMobj(tmthing, NULL, NULL, mass >> 5)`.
+
+    A blasted thing is hurt by every wall it hits (p_map.c, PIT_CheckLine and P_TryMove).
+    """
+    if thing.flags2 & MobjFlag2.MF2_BLASTED:
+        from pyhexen.sim.inter import damage_mobj
+
+        damage_mobj(sim, target=thing, inflictor=None, source=None, damage=thing.info.mass >> 5)
+
+
 def pit_check_line(sim: GameSim, ld: Line) -> bool:
     """Adjust `tmfloorz` and `tmceilingz` as lines are contacted; return False if blocked.
 
@@ -127,25 +140,18 @@ def pit_check_line(sim: GameSim, ld: Line) -> bool:
         return True
 
     # A line has been hit
-    if ld.back_sector is None:
+    if ld.back_sector is None:  # One sided line
+        _damage_blasted(sim, tmthing)
         check_for_push_special(sim, ld, 0, tmthing)
         return False
 
     if not (tmthing.flags & MobjFlag.MF_MISSILE):
-        if ld.flags & ML_BLOCKING:
+        if ld.flags & ML_BLOCKING:  # Explicitly blocking everything
+            _damage_blasted(sim, tmthing)
             check_for_push_special(sim, ld, 0, tmthing)
             return False
-        if (
-            tmthing.player is None
-            and tmthing.type
-            not in (
-                MobjType.MT_PLAYER_FIGHTER,
-                MobjType.MT_PLAYER_CLERIC,
-                MobjType.MT_PLAYER_MAGE,
-                MobjType.MT_ETTIN_MACE,
-            )
-            and (ld.flags & ML_BLOCKMONSTERS)
-        ):
+        if tmthing.player is None and ld.flags & ML_BLOCKMONSTERS:  # Block monsters only
+            _damage_blasted(sim, tmthing)
             return False
 
     opening = line_opening(ld)
@@ -165,59 +171,187 @@ def pit_check_line(sim: GameSim, ld: Line) -> bool:
     return True
 
 
+def _puppy_beat(sim: GameSim, thing: Mobj) -> None:
+    """The SFX_PUPPYBEAT pain grunt of centaurs and ettins (PIT_CheckThing, p_map.c).
+
+    Vanilla skips it while the sound is already playing (S_GetSoundPlayingInfo); the
+    sim cannot see audio state, so it always asks and the audio layer decides.
+    """
+    from pyhexen.sim.sound import start_sound
+
+    if thing.type in (MobjType.MT_CENTAUR, MobjType.MT_CENTAURLEADER, MobjType.MT_ETTIN):
+        start_sound(sim, thing, int(SfxEnum.SFX_PUPPYBEAT))
+
+
+def _skullfly_hit(sim: GameSim, tmthing: Mobj, thing: Mobj) -> bool:
+    """The MF_SKULLFLY part of PIT_CheckThing (p_map.c): charging things and the holy spirit."""
+    from pyhexen.sim.inter import damage_mobj
+    from pyhexen.sim.mobj import set_mobj_state, spawn_mobj
+    from pyhexen.sim.sound import start_sound
+
+    if tmthing.type == MobjType.MT_MINOTAUR:
+        # Slamming minotaurs shouldn't move non-creatures
+        if not (thing.flags & MobjFlag.MF_COUNTKILL):
+            return False
+    elif tmthing.type == MobjType.MT_HOLY_FX:
+        if thing.flags & MobjFlag.MF_SHOOTABLE and thing is not tmthing.target:
+            if sim.netgame and not sim.deathmatch and thing.player is not None:
+                return True  # don't attack other co-op players
+            if thing.flags2 & MobjFlag2.MF2_REFLECTIVE and (
+                thing.player is not None or thing.flags2 & MobjFlag2.MF2_BOSS
+            ):
+                tmthing.special1 = tmthing.target
+                tmthing.target = thing
+                return True
+            if thing.flags & MobjFlag.MF_COUNTKILL or thing.player is not None:
+                tmthing.special1 = thing
+            if sim.rng.p_random() < 96:
+                damage = 12
+                if thing.player is not None or thing.flags2 & MobjFlag2.MF2_BOSS:
+                    damage = 3
+                    # ghost burns out faster when attacking players/bosses
+                    tmthing.health -= 6
+                damage_mobj(sim, thing, tmthing, tmthing.target, damage)
+                if sim.rng.p_random() < 128:
+                    spawn_mobj(sim, tmthing.x, tmthing.y, tmthing.z, MobjType.MT_HOLY_PUFF)
+                    start_sound(sim, tmthing, int(SfxEnum.SFX_SPIRIT_ATTACK))
+                    if thing.flags & MobjFlag.MF_COUNTKILL and sim.rng.p_random() < 128:
+                        _puppy_beat(sim, thing)
+            if thing.health <= 0:
+                tmthing.special1 = 0
+        return True
+    damage = ((sim.rng.p_random() % 8) + 1) * tmthing.damage
+    damage_mobj(sim, thing, tmthing, tmthing, damage)
+    tmthing.flags &= ~MobjFlag.MF_SKULLFLY
+    tmthing.momx = 0
+    tmthing.momy = 0
+    tmthing.momz = 0
+    set_mobj_state(sim, tmthing, tmthing.info.seestate)
+    return False
+
+
+def _lightning_hit(sim: GameSim, tmthing: Mobj, thing: Mobj) -> bool:
+    """The MT_LIGHTNING_FLOOR / MT_LIGHTNING_CEILING part of PIT_CheckThing (p_map.c)."""
+    from pyhexen.sim.inter import damage_mobj
+    from pyhexen.sim.sound import start_sound
+
+    if thing.flags & MobjFlag.MF_SHOOTABLE and thing is not tmthing.target:
+        if thing.info.mass != MAXINT:
+            thing.momx += tmthing.momx >> 4
+            thing.momy += tmthing.momy >> 4
+        if (thing.player is None and not (thing.flags2 & MobjFlag2.MF2_BOSS)) or not (
+            sim.level_time & 1
+        ):
+            if thing.type in (MobjType.MT_CENTAUR, MobjType.MT_CENTAURLEADER):
+                # Lightning does more damage to centaurs
+                damage_mobj(sim, thing, tmthing, tmthing.target, 9)
+            else:
+                damage_mobj(sim, thing, tmthing, tmthing.target, 3)
+            start_sound(sim, tmthing, int(SfxEnum.SFX_MAGE_LIGHTNING_ZAP))
+            if thing.flags & MobjFlag.MF_COUNTKILL and sim.rng.p_random() < 64:
+                _puppy_beat(sim, thing)
+        tmthing.health -= 1
+        if tmthing.health <= 0 or thing.health <= 0:
+            return False
+        if tmthing.type == MobjType.MT_LIGHTNING_FLOOR:
+            partner = tmthing.special2
+            if isinstance(partner, Mobj) and not isinstance(partner.special1, Mobj):
+                partner.special1 = thing
+        elif not isinstance(tmthing.special1, Mobj):
+            tmthing.special1 = thing
+    return True  # lightning zaps through all sprites
+
+
+def _lightning_zap_hit(sim: GameSim, tmthing: Mobj, thing: Mobj) -> None:
+    """The MT_LIGHTNING_ZAP part of PIT_CheckThing (p_map.c)."""
+    if thing.flags & MobjFlag.MF_SHOOTABLE and thing is not tmthing.target:
+        lmo = tmthing.special2
+        if isinstance(lmo, Mobj):
+            if lmo.type == MobjType.MT_LIGHTNING_FLOOR:
+                partner = lmo.special2
+                if isinstance(partner, Mobj) and not isinstance(partner.special1, Mobj):
+                    partner.special1 = thing
+            elif not isinstance(lmo.special1, Mobj):
+                lmo.special1 = thing
+            if not (sim.level_time & 3):
+                lmo.health -= 1
+
+
 def pit_check_thing(sim: GameSim, thing: Mobj) -> bool:
     """Check collision between `st.tmthing` and `thing`; return False if blocked.
 
     Port of PIT_CheckThing (p_map.c).
     """
+    from pyhexen.sim.inter import damage_mobj
+
     st = sim.map_state
     tmthing = st.tmthing
     assert tmthing is not None
 
     if not (thing.flags & (MobjFlag.MF_SOLID | MobjFlag.MF_SPECIAL | MobjFlag.MF_SHOOTABLE)):
-        return True
-
+        return True  # Can't hit thing
     blockdist = thing.radius + tmthing.radius
     if abs32(thing.x - st.tmx) >= blockdist or abs32(thing.y - st.tmy) >= blockdist:
-        return True
-
+        return True  # Didn't hit thing
     if thing is tmthing:
-        return True
-
+        return True  # Don't clip against self
     st.blocking_mobj = thing
-
     if tmthing.flags2 & MobjFlag2.MF2_PASSMOBJ:
-        if not (thing.flags & (MobjFlag.MF_MISSILE | MobjFlag.MF_SKULLFLY)):
-            if tmthing.z + tmthing.height <= thing.z:
-                return True  # underneath
-            if tmthing.z >= thing.z + thing.height:
-                return True  # overhead
-
+        # check if a mobj passed over/under another object
+        if tmthing.type == MobjType.MT_BISHOP and thing.type == MobjType.MT_BISHOP:
+            return False  # don't let bishops fly over other bishops
+        if tmthing.z >= thing.z + thing.height and not (thing.flags & MobjFlag.MF_SPECIAL):
+            return True
+        if tmthing.z + tmthing.height < thing.z and not (thing.flags & MobjFlag.MF_SPECIAL):
+            return True  # under thing
     # Check for skulls slamming into things
     if tmthing.flags & MobjFlag.MF_SKULLFLY:
-        tmthing.flags &= ~MobjFlag.MF_SKULLFLY
-        tmthing.momx = 0
-        tmthing.momy = 0
-        tmthing.momz = 0
-        return False
-
-    # Missiles can hit other things
+        return _skullfly_hit(sim, tmthing, thing)
+    # Check for blasted thing running into another
+    if tmthing.flags2 & MobjFlag2.MF2_BLASTED and thing.flags & MobjFlag.MF_SHOOTABLE:
+        if not (thing.flags2 & MobjFlag2.MF2_BOSS) and thing.flags & MobjFlag.MF_COUNTKILL:
+            thing.momx += tmthing.momx
+            thing.momy += tmthing.momy
+            if thing.momx + thing.momy > 3 * FRACUNIT:
+                damage = c_div(tmthing.info.mass, 100) + 1
+                damage_mobj(sim, thing, tmthing, tmthing, damage)
+                damage = c_div(thing.info.mass, 100) + 1
+                damage_mobj(sim, tmthing, thing, thing, damage >> 2)
+            return False
+    # Check for missile
     if tmthing.flags & MobjFlag.MF_MISSILE:
-        if tmthing.z > thing.z + thing.height:
-            return True  # overhead
-        if tmthing.z + tmthing.height < thing.z:
-            return True  # underneath
-        if tmthing.target is not None and tmthing.target.type == thing.type:
-            if thing is tmthing.target:
-                return True
-            if thing.player is None:
-                return False
-        if not (thing.flags & MobjFlag.MF_SHOOTABLE):
-            return not bool(thing.flags & MobjFlag.MF_SOLID)
+        # Check for a non-shootable mobj
         if thing.flags2 & MobjFlag2.MF2_NONSHOOTABLE:
             return True
-
-        # Ripper missile (MF2_RIP)
+        # Check if it went over / under
+        if tmthing.z > thing.z + thing.height:
+            return True  # Over thing
+        if tmthing.z + tmthing.height < thing.z:
+            return True  # Under thing
+        if tmthing.flags2 & MobjFlag2.MF2_FLOORBOUNCE:
+            return tmthing.target is thing or not (thing.flags & MobjFlag.MF_SOLID)
+        if tmthing.type in (MobjType.MT_LIGHTNING_FLOOR, MobjType.MT_LIGHTNING_CEILING):
+            return _lightning_hit(sim, tmthing, thing)
+        if tmthing.type == MobjType.MT_LIGHTNING_ZAP:
+            _lightning_zap_hit(sim, tmthing, thing)
+        elif tmthing.type == MobjType.MT_MSTAFF_FX2 and thing is not tmthing.target:
+            if (
+                thing.player is None
+                and not (thing.flags2 & MobjFlag2.MF2_BOSS)
+                and thing.type
+                not in (MobjType.MT_FIGHTER_BOSS, MobjType.MT_CLERIC_BOSS, MobjType.MT_MAGE_BOSS)
+            ):
+                # these bosses are not flagged boss so they can be blasted
+                damage_mobj(sim, thing, tmthing, tmthing.target, 10)
+                return True
+        if tmthing.target is not None and tmthing.target.type == thing.type:
+            # Don't hit same species as originator
+            if thing is tmthing.target:
+                return True  # Don't missile self
+            if thing.player is None:
+                return False  # Hit same species as originator, explode, no damage
+        if not (thing.flags & MobjFlag.MF_SHOOTABLE):
+            return not (thing.flags & MobjFlag.MF_SOLID)  # Didn't do any damage
         if tmthing.flags2 & MobjFlag2.MF2_RIP:
             if (
                 not (thing.flags & MobjFlag.MF_NOBLOOD)
@@ -226,28 +360,20 @@ def pit_check_thing(sim: GameSim, thing: Mobj) -> bool:
             ):
                 from pyhexen.sim.attacks import spawn_ripper_blood
 
-                spawn_ripper_blood(sim, tmthing)
+                spawn_ripper_blood(sim, tmthing)  # Ok to spawn some blood
             damage = ((sim.rng.p_random() & 3) + 2) * tmthing.damage
-            from pyhexen.sim.inter import damage_mobj
-
-            damage_mobj(
-                sim,
-                target=thing,
-                inflictor=tmthing,
-                source=tmthing.target,
-                damage=damage,
-            )
-            if (thing.flags2 & MobjFlag2.MF2_PUSHABLE) and not (
+            damage_mobj(sim, thing, tmthing, tmthing.target, damage)
+            if thing.flags2 & MobjFlag2.MF2_PUSHABLE and not (
                 tmthing.flags2 & MobjFlag2.MF2_CANNOTPUSH
             ):
+                # Push thing
                 thing.momx += tmthing.momx >> 2
                 thing.momy += tmthing.momy >> 2
             st.spechit.clear()
             return True
-
-        # Normal missile impact
+        # Do damage
         damage = ((sim.rng.p_random() % 8) + 1) * tmthing.damage
-        if damage > 0:
+        if damage:
             if (
                 not (thing.flags & MobjFlag.MF_NOBLOOD)
                 and not (thing.flags2 & MobjFlag2.MF2_REFLECTIVE)
@@ -260,30 +386,27 @@ def pit_check_thing(sim: GameSim, thing: Mobj) -> bool:
                     MobjType.MT_TELOTHER_FX4,
                     MobjType.MT_TELOTHER_FX5,
                 )
-                and (sim.rng.p_random() < 192)
+                and sim.rng.p_random() < 192
             ):
                 from pyhexen.sim.attacks import spawn_blood_splatter
 
                 spawn_blood_splatter(sim, tmthing.x, tmthing.y, tmthing.z, thing)
-            from pyhexen.sim.inter import damage_mobj
-
-            damage_mobj(
-                sim,
-                target=thing,
-                inflictor=tmthing,
-                source=tmthing.target,
-                damage=damage,
-            )
+            damage_mobj(sim, thing, tmthing, tmthing.target, damage)
         return False
-
+    if thing.flags2 & MobjFlag2.MF2_PUSHABLE and not (tmthing.flags2 & MobjFlag2.MF2_CANNOTPUSH):
+        # Push thing
+        thing.momx += tmthing.momx >> 2
+        thing.momy += tmthing.momy >> 2
+    # Check for special thing
     if thing.flags & MobjFlag.MF_SPECIAL:
-        if tmthing.flags & MobjFlag.MF_PICKUP:
+        solid = bool(thing.flags & MobjFlag.MF_SOLID)
+        if st.tmflags & MobjFlag.MF_PICKUP:
+            # Can be picked up by tmthing
             from pyhexen.sim.artifacts import touch_special_thing
 
-            touch_special_thing(sim, thing, tmthing)
-        return not bool(thing.flags & MobjFlag.MF_SOLID)
-
-    return not bool(thing.flags & MobjFlag.MF_SOLID)
+            touch_special_thing(sim, thing, tmthing)  # Can remove thing
+        return not solid
+    return not (thing.flags & MobjFlag.MF_SOLID)
 
 
 def check_position(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
@@ -320,7 +443,7 @@ def check_position(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
     st.spechit.clear()
     st.blocking_mobj = None
 
-    if st.tmflags & MobjFlag.MF_NOCLIP:
+    if st.tmflags & MobjFlag.MF_NOCLIP and not (st.tmflags & MobjFlag.MF_SKULLFLY):
         return True
 
     # Check things first, possibly picking up items
@@ -335,6 +458,12 @@ def check_position(sim: GameSim, thing: Mobj, x: int, y: int) -> bool:
                 return False
 
     # Check lines
+    if st.tmflags & MobjFlag.MF_NOCLIP:
+        return True
+
+    # A thing touched above (PIT_CheckThing sets BlockingMobj before deciding) did not
+    # block the move, so it must not count as the blocker if a line does.
+    st.blocking_mobj = None
     xl = (st.tmbox[BOXLEFT] - bm.org_x) >> MAPBLOCKSHIFT
     xh = (st.tmbox[BOXRIGHT] - bm.org_x) >> MAPBLOCKSHIFT
     yl = (st.tmbox[BOXBOTTOM] - bm.org_y) >> MAPBLOCKSHIFT
@@ -354,12 +483,8 @@ def _push_line(sim: GameSim, thing: Mobj) -> bool:
     """The `pushline:` exit of P_TryMove: blasted damage and push specials, then fail."""
     if not (thing.flags & (MobjFlag.MF_TELEPORT | MobjFlag.MF_NOCLIP)):
         tmthing = sim.map_state.tmthing
-        if tmthing is not None and tmthing.flags2 & MobjFlag2.MF2_BLASTED:
-            from pyhexen.sim.inter import damage_mobj
-
-            damage_mobj(
-                sim, target=tmthing, inflictor=None, source=None, damage=tmthing.info.mass >> 5
-            )
+        if tmthing is not None:
+            _damage_blasted(sim, tmthing)
         _check_spechit_push(sim, thing, thing.x, thing.y)
     return False
 
@@ -672,6 +797,76 @@ def _ptr_slide_traverse(sim: GameSim, in_: Intercept) -> bool:
         st.best_slide_line = li
 
     return False  # Stop searching
+
+
+def _ptr_bounce_traverse(sim: GameSim, in_: Intercept) -> bool:
+    """Port of PTR_BounceTraverse (p_map.c)."""
+    st = sim.map_state
+    slide_mo = st.slide_mo
+    assert slide_mo is not None
+    li = in_.line
+    assert li is not None
+
+    if not (li.flags & ML_TWOSIDED):
+        if point_on_line_side(slide_mo.x, slide_mo.y, li):
+            return True  # don't hit the back side
+    else:
+        opening = line_opening(li)  # set openrange, opentop, openbottom
+        if opening.openrange >= slide_mo.height and opening.opentop - slide_mo.z >= slide_mo.height:
+            return True  # this line doesn't block movement
+
+    # the line does block movement, see if it is closer than best so far
+    if in_.frac < st.best_slide_frac:
+        st.second_slide_frac = st.best_slide_frac
+        st.second_slide_line = st.best_slide_line
+        st.best_slide_frac = in_.frac
+        st.best_slide_line = li
+    return False  # stop
+
+
+def bounce_wall(sim: GameSim, mo: Mobj) -> None:
+    """Bounce a floor-bouncing missile off the wall it ran into.
+
+    Port of P_BounceWall (p_map.c). Like vanilla, the best slide line is shared with
+    P_SlideMove and not reset, so a trace that finds no line reuses the previous one;
+    vanilla stops with I_Error when there has never been one, this port leaves the
+    momentum alone.
+    """
+    level = sim.level
+    if level is None:
+        return
+    st = sim.map_state
+    st.slide_mo = mo
+
+    # trace along the three leading corners
+    leadx = mo.x + mo.radius if mo.momx > 0 else mo.x - mo.radius
+    leady = mo.y + mo.radius if mo.momy > 0 else mo.y - mo.radius
+    st.best_slide_frac = FRACUNIT + 1
+    path_traverse(
+        level,
+        leadx,
+        leady,
+        leadx + mo.momx,
+        leady + mo.momy,
+        PT_ADDLINES,
+        lambda in_: _ptr_bounce_traverse(sim, in_),
+    )
+    line = st.best_slide_line
+    if line is None:
+        return
+
+    side = point_on_line_side(mo.x, mo.y, line)
+    lineangle = point_to_angle2(0, 0, line.dx, line.dy)
+    if side == 1:
+        lineangle = (lineangle + ANG180) & 0xFFFFFFFF
+    moveangle = point_to_angle2(0, 0, mo.momx, mo.momy)
+    deltaangle = ((2 * lineangle - moveangle) & 0xFFFFFFFF) >> ANGLETOFINESHIFT
+
+    movelen = fixed_mul(approx_distance(mo.momx, mo.momy), BOUNCE_FRICTION)  # friction
+    if movelen < FRACUNIT:
+        movelen = 2 * FRACUNIT
+    mo.momx = fixed_mul(movelen, fine_cosine(deltaangle))
+    mo.momy = fixed_mul(movelen, fine_sine(deltaangle))
 
 
 def slide_move(sim: GameSim, mo: Mobj) -> None:

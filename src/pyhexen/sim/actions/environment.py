@@ -22,7 +22,7 @@ from pyhexen.core.angles import (
     fine_sine,
     point_to_angle2,
 )
-from pyhexen.core.fixed import FRACBITS, FRACUNIT, abs32, c_div, fixed_mul
+from pyhexen.core.fixed import FRACBITS, FRACUNIT, abs32, c_div, fixed_mul, to_int32
 from pyhexen.sim.acs.vm import TRANSLATE_THING_TYPE
 from pyhexen.sim.actions import action
 from pyhexen.sim.attacks import spawn_missile_angle
@@ -383,9 +383,9 @@ def a_fogspawn(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> None
     if actor is None or sim is None:
         return
 
+    # `if (actor->special1.i-- > 0) return;`: the test is on the value before the decrement.
     freq_count = int(actor.special1) if isinstance(actor.special1, int) else 0
-    freq_count -= 1
-    actor.special1 = freq_count
+    actor.special1 = to_int32(freq_count - 1)
     if freq_count > 0:
         return
 
@@ -406,8 +406,9 @@ def a_fogspawn(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> None
             actor.angle + (((sim.rng.p_random() % delta) - (delta >> 1)) << 24)
         ) & 0xFFFFFFFF
         mo.target = actor
-        max_speed = actor.args[0] if (len(actor.args) > 0 and actor.args[0] >= 1) else 1
-        spd = (sim.rng.p_random() % max_speed) + 1
+        if actor.args[0] < 1:
+            actor.args = (1, *actor.args[1:])
+        spd = (sim.rng.p_random() % actor.args[0]) + 1  # Random speed
         lifetime = actor.args[3] if len(actor.args) > 3 else 0
         mo.args = (spd, mo.args[1], mo.args[2], lifetime, 1)
         mo.special2 = sim.rng.p_random() & 63

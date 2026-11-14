@@ -685,24 +685,17 @@ def kill_mobj(sim: GameSim, source: Mobj | None, target: Mobj) -> None:
                 mo=target,
             )
 
-    # Check for frag changes in deathmatch/netgame
+    # Check for frag changes (frags[target's player number])
     if source is not None and source.player is not None and target.player is not None:
-        if hasattr(target.player, "frags") and isinstance(target.player.frags, list):
-            try:
-                target_idx = sim.players.index(target.player)
-                if target is source:
-                    target.player.frags[target_idx] -= 1
-                else:
-                    source.player.frags[target_idx] += 1
-            except (ValueError, IndexError):
-                pass
-    elif target.player is not None and source is None:
-        if hasattr(target.player, "frags") and isinstance(target.player.frags, list):
-            try:
-                target_idx = sim.players.index(target.player)
+        if target.player in sim.players:
+            target_idx = sim.players.index(target.player)
+            if target is source:  # Self-frag
                 target.player.frags[target_idx] -= 1
-            except (ValueError, IndexError):
-                pass
+            else:
+                source.player.frags[target_idx] += 1
+    if target.player is not None and source is None and target.player in sim.players:
+        # Player death without a source: self-frag
+        target.player.frags[sim.players.index(target.player)] -= 1
 
     # Player death processing
     player = target.player

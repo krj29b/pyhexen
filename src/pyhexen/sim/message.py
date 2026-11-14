@@ -65,5 +65,6 @@ def clear_message(player: Player) -> None:
 
 
 def console_player(sim: GameSim) -> Player | None:
-    """Return `players[consoleplayer]` (player 0), or None before players spawn."""
-    return sim.players[0] if sim.players else None
+    """Return `players[consoleplayer]`, or None before players spawn."""
+    num = getattr(sim, "consoleplayer", 0)
+    return sim.players[num] if num < len(sim.players) else None

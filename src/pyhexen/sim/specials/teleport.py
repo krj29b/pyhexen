@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
     from pyhexen.sim.mobj import Mobj
 
-TELEFOGHEIGHT: int = 24 * FRACUNIT
+TELEFOGHEIGHT: int = 32 * FRACUNIT  # h2def.h
 
 
 def p_teleport(

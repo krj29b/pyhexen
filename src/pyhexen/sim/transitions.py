@@ -203,17 +203,18 @@ def spawn_player_at_transition(
         if mo not in sim.thinkers:
             sim.thinkers.add(mo)
     else:
-        spawned = spawn_player(
+        # P_SpawnPlayer on the carried player struct (it is in PST_LIVE, so it keeps
+        # everything it had).
+        if player not in sim.players:
+            sim.players.append(player)
+        spawn_player(
             sim,
-            player_num=player_num,
+            player_num=sim.players.index(player),
             start_spot=position,
             x=spawn_x,
             y=spawn_y,
             angle=spawn_angle,
         )
-        player.mo = spawned.mo
-        if player.mo is not None:
-            player.mo.player = player
 
     if player not in sim.players:
         sim.players.append(player)

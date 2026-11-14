@@ -42,6 +42,8 @@ class GameSim:
         netgame: bool = False,
         deathmatch: bool = False,
         nomonsters: bool = False,
+        player_classes: Sequence[int] | None = None,
+        random_class: bool = False,
     ) -> None:
         self.rng: Random = rng if rng is not None else Random()
         self.events: EventBus = events if events is not None else EventBus()
@@ -52,6 +54,17 @@ class GameSim:
         self.netgame: bool = netgame
         self.deathmatch: bool = deathmatch
         self.nomonsters: bool = nomonsters
+        # PlayerClass[] per player number (netgames); player 0 defaults to player_class.
+        self.player_classes: list[int] = (
+            list(player_classes) if player_classes is not None else [player_class]
+        )
+        # -randclass: deathmatch players get a random class at every spawn.
+        self.random_class: bool = random_class
+        # RebornPosition: the start group coop players respawn at (the map entry position).
+        self.reborn_position: int = 0
+        # consoleplayer: whose view, messages and sounds this node shows. UI only; it
+        # never changes sim state, so every node of a netgame stays in sync.
+        self.consoleplayer: int = 0
         self.tid_map: dict[int, list[Mobj]] = {}
         # activeceilings[MAXCEILINGS] and activeplats[MAXPLATS] (p_ceilng.c, p_plats.c).
         self.active_ceilings: list[Any] = [None] * 30
@@ -92,6 +105,19 @@ class GameSim:
             except Exception:
                 self.acs_vm = None
 
+    def class_of(self, player_num: int) -> int:
+        """PlayerClass[player_num]."""
+        if player_num < len(self.player_classes):
+            return self.player_classes[player_num]
+        return self.player_class
+
+    def set_class(self, player_num: int, pclass: int) -> None:
+        while len(self.player_classes) <= player_num:
+            self.player_classes.append(self.player_class)
+        self.player_classes[player_num] = pclass
+        if player_num == 0:
+            self.player_class = pclass
+
     def setup_level(
         self,
         player_nums: Sequence[int] = (),
@@ -99,6 +125,7 @@ class GameSim:
         lightning: bool = False,
         sky1_scroll_delta: int = 0,
         sky2_scroll_delta: int = 0,
+        timer_minutes: int = 0,
     ) -> None:
         """Map-entry setup shared by new games and map changes.
 
@@ -110,13 +137,26 @@ class GameSim:
         Polyobjects are already initialised by `load_level`.
         """
         from pyhexen.sim.mobj import spawn_map_things
+        from pyhexen.sim.netplay import check_deathmatch_starts, spawn_deathmatch_players
+        from pyhexen.sim.player import Player, PlayerState
         from pyhexen.sim.specials.sector_specials import p_spawn_specials
 
         self.surface_animator.init_sky(sky1_scroll_delta, sky2_scroll_delta)
         self.rng.clear()
+        # G_InitNew leaves every player in PST_REBORN; P_SpawnPlayer resets them.
+        for num in sorted(set(player_nums)):
+            while len(self.players) <= num:
+                self.players.append(Player(player_state=PlayerState.PST_REBORN))
         spawn_map_things(self, player_nums)
+        check_deathmatch_starts(self)
         if self.acs_vm is not None:
             self.acs_vm.start_open_scripts(self)
+        # If deathmatch, randomly spawn the active players (P_SetupLevel)
+        self.timer_game = 0
+        if self.deathmatch and player_nums:
+            spawn_deathmatch_players(self)
+            if timer_minutes:
+                self.timer_game = timer_minutes * 35 * 60
         p_spawn_specials(self)
         # P_InitLightning comes last in P_SetupLevel; `lightning` is the MAPINFO flag.
         self.surface_animator.init_lightning(self, enabled=lightning)
@@ -177,7 +217,19 @@ class GameSim:
 
                 exit_normal(self, position=0)
 
+        if self.netgame:
+            # G_Ticker: reborn dead players before their commands run. Single player
+            # reborns go through the game flow (reborn slot or a new game) instead.
+            from pyhexen.sim.netplay import do_reborn
+            from pyhexen.sim.player import PlayerState
+
+            for idx, player in enumerate(self.players):
+                if player.in_game and player.player_state == PlayerState.PST_REBORN:
+                    do_reborn(self, idx)
+
         for idx, player in enumerate(self.players):
+            if not player.in_game:
+                continue
             if idx < len(cmds) and isinstance(cmds[idx], TicCmd):
                 player.cmd = cmds[idx]
             p_player_think(self, player)

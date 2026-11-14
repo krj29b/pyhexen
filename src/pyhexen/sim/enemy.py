@@ -303,72 +303,57 @@ def look_for_players(
     if actor is None:
         return False
 
-    candidates = _get_player_candidates(sim)
-    if not candidates:
+    if sim is None or not sim.players:
         return False
+    players = sim.players
+    if not sim.netgame and players[0].health <= 0:
+        # Single player game and player is dead, look for monsters
+        return look_for_monsters(actor, sim)
 
-    is_netgame = getattr(sim, "netgame", False) if sim is not None else False
-    if not is_netgame:
-        first_player, first_mo = candidates[0]
-        first_health = getattr(first_player, "health", getattr(first_mo, "health", 0))
-        if getattr(first_mo, "health", 1) <= 0 or (first_mo.flags & MobjFlag.MF_SHOOTABLE) == 0:
-            first_health = 0
-        if first_health <= 0:
-            return look_for_monsters(actor, sim)
-
-    num_players = len(candidates)
     c = 0
+    # The 3 is vanilla's (probably meant MAXPLAYERS - 1); changing it would desync.
     stop = (actor.lastlook - 1) & 3
-
-    for _ in range(4):
+    consecutive_missing = 0  # Chocolate's guard against vanilla's infinite loop
+    while True:
         idx = actor.lastlook
-        actor.lastlook = (actor.lastlook + 1) & 3
-
-        if idx >= num_players:
+        if idx >= len(players) or not players[idx].in_game:
+            if consecutive_missing == 4:  # checked before counting this miss
+                raise RuntimeError("P_LookForPlayers: No player 1 - 4.")
+            consecutive_missing += 1
+            actor.lastlook = (actor.lastlook + 1) & 3
             continue
-
+        consecutive_missing = 0
+        if c == 2 or idx == stop:
+            return False  # done looking
         c += 1
-        p_obj, pmo = candidates[idx]
-        health = getattr(p_obj, "health", getattr(pmo, "health", 0))
-        if getattr(pmo, "health", 1) <= 0 or (pmo.flags & MobjFlag.MF_SHOOTABLE) == 0:
-            health = 0
-        if health <= 0:
-            if c >= 2 or idx == stop:
-                break
-            continue
-
+        player = players[idx]
+        pmo = player.mo
+        if player.health <= 0 or pmo is None:
+            actor.lastlook = (actor.lastlook + 1) & 3
+            continue  # dead
         if not check_sight(sim, actor, pmo):
-            if c >= 2 or idx == stop:
-                break
-            continue
-
+            actor.lastlook = (actor.lastlook + 1) & 3
+            continue  # out of sight
         if not allaround:
             an = to_uint32(point_to_angle2(actor.x, actor.y, pmo.x, pmo.y) - actor.angle)
             if ANG90 < an < ANG270:
                 dist = approx_distance(pmo.x - actor.x, pmo.y - actor.y)
-                if dist > MELEERANGE:
-                    if c >= 2 or idx == stop:
-                        break
-                    continue
-
-        if pmo.flags & MobjFlag.MF_SHADOW:
-            dist = approx_distance(pmo.x - actor.x, pmo.y - actor.y)
-            speed = approx_distance(pmo.momx, pmo.momy)
-            if dist > 2 * MELEERANGE and speed < 5 * FRACUNIT:
-                return False
-            if sim is not None and sim.rng.p_random() < 225:
-                return False
-
-        if actor.type == MobjType.MT_MINOTAUR:
-            if actor.special1 is p_obj or actor.special1 is pmo:
-                if c >= 2 or idx == stop:
-                    break
-                continue
-
+                if dist > MELEERANGE:  # if real close, react anyway
+                    actor.lastlook = (actor.lastlook + 1) & 3
+                    continue  # behind back
+        if pmo.flags & MobjFlag.MF_SHADOW:  # Player is invisible
+            if (
+                approx_distance(pmo.x - actor.x, pmo.y - actor.y) > 2 * MELEERANGE
+                and approx_distance(pmo.momx, pmo.momy) < 5 * FRACUNIT
+            ):
+                return False  # Player is sneaking - can't detect
+            if sim.rng.p_random() < 225:
+                return False  # Player isn't sneaking, but still didn't detect
+        if actor.type == MobjType.MT_MINOTAUR and actor.special1 is player:
+            actor.lastlook = (actor.lastlook + 1) & 3
+            continue  # Don't target master
         actor.target = pmo
         return True
-
-    return False
 
 
 def _wake_up(actor: Mobj, sim: GameSim | None) -> None:

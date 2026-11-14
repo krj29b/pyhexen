@@ -149,15 +149,20 @@ def a_potterycheck(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> 
     if actor is None or sim is None:
         return
 
-    for player in getattr(sim, "players", []):
+    # Single player watches only the console player; a netgame every player in it.
+    if sim.netgame:
+        watchers = [p for p in sim.players if p.in_game]
+    else:
+        watchers = [sim.players[sim.consoleplayer]] if sim.players else []
+    for player in watchers:
         pmo = player.mo
         if pmo is None:
             continue
         if check_sight(sim, actor, pmo):
             angle_to_actor = point_to_angle2(pmo.x, pmo.y, actor.x, actor.y)
-            diff = abs32((angle_to_actor - pmo.angle) & 0xFFFFFFFF)
-            if diff <= ANG45 or (0x100000000 - diff) <= ANG45:
-                # Revert to previous state (waiting state)
+            # abs((int)angle - (int)pmo->angle) <= ANG45, on signed 32-bit values
+            if abs(to_int32(to_int32(angle_to_actor) - to_int32(pmo.angle))) <= ANG45:
+                # Previous state (pottery bit waiting state)
                 set_mobj_state(sim, actor, actor.state_num - 1)
                 return
 
@@ -458,16 +463,19 @@ def a_quake(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> None:
     if actor is None or sim is None:
         return
 
-    richters = actor.args[0] if len(actor.args) > 0 else 0
-    duration = (actor.args[1] if len(actor.args) > 1 else 0) - 1
-    dmg_rad = actor.args[2] if len(actor.args) > 2 else 0
-    tremor_rad = actor.args[3] if len(actor.args) > 3 else 0
-    actor.args = (richters, duration, dmg_rad, tremor_rad, actor.args[4])
+    richters = actor.args[0]
+    duration = actor.args[1]
+    dmg_rad = actor.args[2]
+    tremor_rad = actor.args[3]
+    # actor->args[1]-- > 0: compare, then decrement the byte
+    actor.args = (richters, (duration - 1) & 0xFF, dmg_rad, tremor_rad, actor.args[4])
 
     if duration > 0:
-        for player in getattr(sim, "players", []):
+        for player in sim.players:
+            if not player.in_game:
+                continue
             pmo = player.mo
-            if pmo is None or pmo.health <= 0:
+            if pmo is None:
                 continue
             dist = approx_distance(actor.x - pmo.x, actor.y - pmo.y) >> (FRACBITS + 6)
             if dist < tremor_rad:

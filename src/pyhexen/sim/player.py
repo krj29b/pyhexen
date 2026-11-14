@@ -9,7 +9,7 @@ Port of P_PlayerThink, P_MovePlayer, P_CalcHeight, P_DeathThink, and P_Thrust (p
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
@@ -42,7 +42,8 @@ from pyhexen.core.ticcmd import (
 )
 from pyhexen.sim.info_data import MF_TRANSSHIFT, MobjFlag, MobjFlag2, MobjType, StateNum
 from pyhexen.sim.line_activation import p_use_lines
-from pyhexen.sim.mobj import ONFLOORZ, Mobj, set_mobj_state, spawn_mobj
+from pyhexen.sim.message import clear_message
+from pyhexen.sim.mobj import MAXPLAYERS, ONFLOORZ, Mobj, set_mobj_state, spawn_mobj
 from pyhexen.sim.psprites import (
     NUMPSPRITES,
     WP_FIRST,
@@ -198,6 +199,9 @@ class Player:
     world_timer: int = 0
     cheats: int = 0
     quake_intensity: int = 0
+    frags: list[int] = field(default_factory=lambda: [0] * MAXPLAYERS)
+    # playeringame[]: False once the player has left a netgame.
+    in_game: bool = True
 
     def to_state(self, mobj_index_map: dict[int, int] | None = None) -> dict[str, Any]:
         """Port of StreamOut_player_t (sv_save.c:1350-1450)."""
@@ -245,6 +249,8 @@ class Player:
             "world_timer": self.world_timer,
             "cheats": self.cheats,
             "quake_intensity": self.quake_intensity,
+            "frags": list(self.frags),
+            "in_game": self.in_game,
             "mo_id": mo_idx,
         }
 
@@ -292,6 +298,8 @@ class Player:
         self.world_timer = state.get("world_timer", 0)
         self.cheats = state.get("cheats", 0)
         self.quake_intensity = state.get("quake_intensity", 0)
+        self.frags = list(state.get("frags", [0] * MAXPLAYERS))
+        self.in_game = state.get("in_game", True)
 
 
 def p_thrust(player: Player, angle: int, move: int) -> None:
@@ -700,6 +708,31 @@ def p_player_think(sim: GameSim, player: Player) -> None:
         player.fixedcolormap = 0
 
 
+def g_player_reborn(sim: GameSim, player_num: int) -> None:
+    """Port of G_PlayerReborn (g_game.c): reset a player, keeping frags and counters."""
+    player = sim.players[player_num]
+    frags = list(player.frags)
+    secret_count = player.secret_count
+    world_timer = player.world_timer
+    fresh = Player()
+    for f in fields(Player):
+        setattr(player, f.name, getattr(fresh, f.name))
+    player.frags = frags
+    player.in_game = True
+    player.secret_count = secret_count
+    player.world_timer = world_timer
+    player.player_class = sim.class_of(player_num)
+    player.original_class = player.player_class
+    player.usedown = player.attackdown = True  # don't do anything immediately
+    player.player_state = PlayerState.PST_LIVE
+    player.health = MAXHEALTH
+    player.readyweapon = player.pendingweapon = WP_FIRST
+    player.weaponowned[WP_FIRST] = True
+    player.message_tics = 0
+    player.lookdir = 0
+    player.quake_intensity = 0  # localQuakeHappening[player] = false
+
+
 def spawn_player(
     sim: GameSim,
     player_num: int = 0,
@@ -709,10 +742,18 @@ def spawn_player(
     y: int | None = None,
     angle: int = 0,
 ) -> Player:
-    """Spawn a `Player` and its underlying `Mobj` into `sim`.
+    """Spawn player `player_num` at its start (or at `x`, `y`).
 
-    Port of P_SpawnPlayer (p_mobj.c).
+    Port of P_SpawnPlayer (p_mobj.c). The player struct persists in `sim.players`
+    (vanilla's `players[]`); a player in PST_REBORN is reset by G_PlayerReborn first.
+    A missing struct is created in PST_REBORN, as G_InitNew leaves every player.
     """
+    while len(sim.players) <= player_num:
+        sim.players.append(Player(player_state=PlayerState.PST_REBORN))
+    player = sim.players[player_num]
+    if player.player_state == PlayerState.PST_REBORN:
+        g_player_reborn(sim, player_num)
+
     mthing = sim.player_starts.get((player_num, start_spot)) or sim.player_starts.get(
         (player_num, 0)
     )
@@ -728,7 +769,14 @@ def spawn_player(
         spawn_x = x
         spawn_y = y
 
-    pclass = sim.player_class & 3
+    if sim.random_class and sim.deathmatch:
+        pclass = sim.rng.p_random() % 3
+        if pclass == sim.class_of(player_num):
+            pclass = (pclass + 1) % 3
+        sim.set_class(player_num, pclass)
+    else:
+        pclass = sim.class_of(player_num) & 3
+    player.player_class = pclass
     mtype = PLAYER_MOBJ_TYPES[pclass]
     mo = spawn_mobj(sim, spawn_x, spawn_y, ONFLOORZ, mtype)
     # Translation table bits: the first Fighter start is blue, the third keeps the
@@ -740,20 +788,23 @@ def spawn_player(
     elif start_type > 1:
         mo.flags |= (start_type - 1) << MF_TRANSSHIFT
     mo.angle = to_uint32(angle)
-
-    player = Player(
-        mo=mo,
-        player_state=PlayerState.PST_LIVE,
-        player_class=pclass,
-        original_class=pclass,
-        viewz=mo.z + VIEWHEIGHT,
-        prev_viewz=mo.z + VIEWHEIGHT,
-        viewheight=VIEWHEIGHT,
-        health=mo.health,
-    )
     mo.player = player
+    mo.health = player.health
+    player.mo = mo
+    player.player_state = PlayerState.PST_LIVE
+    player.refire = 0
+    clear_message(player)
+    player.damagecount = 0
+    player.bonuscount = 0
+    player.poisoncount = 0
+    player.morph_tics = 0
+    player.extralight = 0
+    player.fixedcolormap = 0
+    player.viewheight = VIEWHEIGHT
+    player.viewz = mo.z + VIEWHEIGHT
+    player.prev_viewz = player.viewz
     p_setup_psprites(sim, player)
+    if sim.deathmatch:  # Give all keys in death match mode
+        player.keys = 2047
     mo.capture_prev_state()
-    if player not in sim.players:
-        sim.players.append(player)
     return player

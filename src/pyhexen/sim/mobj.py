@@ -679,9 +679,16 @@ def spawn_map_thing(sim: GameSim, mthing: MapThing) -> Mobj | None:
         if not (options & MTF_GDEATHMATCH):
             return None
 
-    # Filter by player class in single-player (0=Fighter, 1=Cleric, 2=Mage)
+    # Filter by player class (0=Fighter, 1=Cleric, 2=Mage): single player uses the
+    # player's class, coop any class in the game, deathmatch spawns everything.
     if not sim.netgame:
         class_mask = MTF_FIGHTER << sim.player_class
+        if not (options & class_mask):
+            return None
+    elif not sim.deathmatch:
+        class_mask = 0
+        for num in range(max(1, len(sim.players))):
+            class_mask |= MTF_FIGHTER << sim.class_of(num)
         if not (options & class_mask):
             return None
 
@@ -780,7 +787,8 @@ def spawn_map_things(sim: GameSim, player_nums: Sequence[int] = ()) -> list[Mobj
     player mobj sits at that point in the thinker list, which fixes the order of
     every later thinker and P_Random call. Vanilla spawns again at a duplicate start
     (leaving a "voodoo doll"); here each player spawns once, at the first start.
-    Players without a start, and every player in deathmatch, spawn after the things.
+    Players without a start spawn after the things; deathmatch players are spawned
+    later by `setup_level` (G_DeathMatchSpawnPlayer).
     """
     from pyhexen.sim.player import spawn_player
 
@@ -797,6 +805,7 @@ def spawn_map_things(sim: GameSim, player_nums: Sequence[int] = ()) -> list[Mobj
         if num in pending and not sim.deathmatch and mthing.args[0] == 0:
             spawn_player(sim, num)
             pending.remove(num)
-    for num in pending:
-        spawn_player(sim, num)
+    if not sim.deathmatch:  # deathmatch players spawn at random starts (setup_level)
+        for num in pending:
+            spawn_player(sim, num)
     return spawned

@@ -227,9 +227,12 @@ def test_quake() -> None:
 
     a_quake(quake_mo, sim)
     assert getattr(player, "quake_intensity", 0) == 5
+    assert quake_mo.args[1] == 9
 
-    # Expire quake
+    # args[1]-- > 0 compares before decrementing: 1 still quakes, 0 expires
     quake_mo.args = (5, 1, 20, 20, 0)
+    a_quake(quake_mo, sim)
+    assert quake_mo.state_num != int(StateNum.S_NULL)
     a_quake(quake_mo, sim)
     assert getattr(player, "quake_intensity", 0) == 0
     assert quake_mo.state_num == int(StateNum.S_NULL)

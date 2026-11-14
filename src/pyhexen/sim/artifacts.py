@@ -62,6 +62,7 @@ from pyhexen.sim.mobj import (
     FLOAT_BOB_OFFSETS,
     Mobj,
     remove_mobj,
+    remove_mobj_from_tid_list,
     set_mobj_state,
     spawn_mobj,
 )
@@ -656,18 +657,17 @@ def p_arti_teleport_other(sim: GameSim, player: Player) -> None:
 
 
 def teleport_other(sim: GameSim, victim: Mobj) -> None:
-    """Port of P_TeleportOther (p_user.c:1062). Teleports victim to start spot."""
-    from pyhexen.sim.actions.monsters_bosses import p_teleport
-
+    """Port of P_TeleportOther (p_user.c:1062): players to a player (or deathmatch) start,
+    monsters to a deathmatch start after running their death special."""
     if victim.player is not None:
-        mthing = sim.player_starts.get((0, 0))
-        if mthing is not None:
-            dest_x = mthing.x << 16
-            dest_y = mthing.y << 16
-            dest_angle = to_uint32(ANG45 * c_div(mthing.angle, 45))
-            p_teleport(sim, victim, dest_x, dest_y, dest_angle, use_fog=True)
+        if sim.deathmatch:
+            teleport_to_deathmatch_starts(sim, victim)
+        else:
+            teleport_to_player_starts(sim, victim)
     else:
+        # If death action, run it upon teleport
         if (victim.flags & MobjFlag.MF_COUNTKILL) and victim.special:
+            remove_mobj_from_tid_list(sim, victim)
             execute_line_special(
                 sim,
                 victim.special,
@@ -678,12 +678,34 @@ def teleport_other(sim: GameSim, victim: Mobj) -> None:
             )
             victim.special = 0
 
-        mthing = sim.player_starts.get((0, 0))
-        if mthing is not None:
-            dest_x = mthing.x << 16
-            dest_y = mthing.y << 16
-            dest_angle = to_uint32(ANG45 * c_div(mthing.angle, 45))
-            p_teleport(sim, victim, dest_x, dest_y, dest_angle, use_fog=True)
+        # Send all monsters to deathmatch spots
+        teleport_to_deathmatch_starts(sim, victim)
+
+
+def teleport_to_player_starts(sim: GameSim, victim: Mobj) -> None:
+    """Port of P_TeleportToPlayerStarts (p_user.c): a random start of a player in the game."""
+    from pyhexen.sim.actions.monsters_bosses import p_teleport
+
+    selections = sum(1 for p in sim.players if p.in_game) or 1
+    i = sim.rng.p_random() % selections
+    start = sim.player_starts.get((i, 0)) or sim.player_starts.get((0, 0))
+    if start is None:
+        return
+    angle = to_uint32(ANG45 * c_div(start.angle, 45))
+    p_teleport(sim, victim, start.x << 16, start.y << 16, angle, use_fog=True)
+
+
+def teleport_to_deathmatch_starts(sim: GameSim, victim: Mobj) -> None:
+    """Port of P_TeleportToDeathmatchStarts (p_user.c)."""
+    from pyhexen.sim.actions.monsters_bosses import p_teleport
+
+    selections = len(sim.deathmatch_starts)
+    if selections:
+        start = sim.deathmatch_starts[sim.rng.p_random() % selections]
+        angle = to_uint32(ANG45 * c_div(start.angle, 45))
+        p_teleport(sim, victim, start.x << 16, start.y << 16, angle, use_fog=True)
+    else:
+        teleport_to_player_starts(sim, victim)
 
 
 def morph_player(sim: GameSim, player: Player) -> bool:

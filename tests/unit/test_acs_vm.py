@@ -674,6 +674,8 @@ class TestACSGamePCodes:
         behavior = build_behavior({1: code})
         sim = GameSim(skill=3, deathmatch=True)
         sim.level_time = 120
+        # CmdPlayerCount counts playeringame[], dead or alive; one has left.
+        sim.players = [Player(), Player(health=0), Player(in_game=False)]
         vm = ACSVM(behavior)
         sim.acs_vm = vm
 
@@ -684,7 +686,7 @@ class TestACSGamePCodes:
         assert script.vars[0] == 1  # Deathmatch
         assert script.vars[1] == 3  # Skill
         assert script.vars[2] == 120  # Level time
-        assert script.vars[3] == 1  # Player count
+        assert script.vars[3] == 2  # Player count
 
     def test_thing_count_pcode(self) -> None:
         """Test PCD_THINGCOUNT and PCD_THINGCOUNTDIRECT."""

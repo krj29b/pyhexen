@@ -554,5 +554,10 @@ def build_demo_sim(wad: WadStack | WadFile, mapinfo: MapInfoTable, demo: Demo) -
     sim.cluster = info.cluster if info else 1
     sim.next_map = info.next_map if info else 0
     sim.surface_animator = load_surface_animator(wad)
-    sim.setup_level(player_nums=(0,), lightning=bool(info and info.lightning))
+    sim.setup_level(
+        player_nums=(0,),
+        lightning=bool(info and info.lightning),
+        sky1_scroll_delta=info.sky1_scroll_delta if info else 0,
+        sky2_scroll_delta=info.sky2_scroll_delta if info else 0,
+    )
     return sim

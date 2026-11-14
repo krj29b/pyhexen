@@ -2,223 +2,40 @@
 # Portions derived from Hexen (c) Raven Software / id Software and Chocolate Doom,
 # released under the GNU GPL v2. This file is licensed GPL-2.0-or-later.
 
-"""Single/double-layer sky renderer and lightning flash state machine (T4.6).
+"""Single/double-layer sky renderer (T4.6).
 
-Port of R_InitSky / R_DrawSkyPlane / R_DrawDoubleSkyPlane (r_plane.c) and
-P_InitLightning / P_LightningFlash / P_ForceLightning / P_AnimateSurfaces (p_anim.c).
+Port of R_DrawSkyPlane / R_DrawDoubleSkyPlane (r_plane.c). Sky scrolling and the
+lightning sky swap are simulation state (P_AnimateSurfaces / P_LightningFlash in
+`sim/specials/anim.py`); the renderer only reads them (`sync_from_animator`).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import moderngl
 import numpy as np
 
 from pyhexen.core.fixed import FRACUNIT
-from pyhexen.core.random import Random
 from pyhexen.render.textures import GpuTexture, GpuTextureManager
 from pyhexen.wad.mapinfo import MapInfo
 
-# Sector special constants for lightning from p_anim.c
-LIGHTNING_SPECIAL = 198
-LIGHTNING_SPECIAL2 = 199
-SKYCHANGE_SPECIAL = 200
+if TYPE_CHECKING:
+    from pyhexen.sim.specials.anim import SurfaceAnimator
 
 _SHADERS_DIR = Path(__file__).resolve().parent / "shaders"
-
-
-def _is_sky_sector(sector: Any, sky_flat_num: int) -> bool:
-    """Return True if the sector has a sky ceiling or indoor lightning special."""
-    ceiling_pic = getattr(sector, "ceilingpic", getattr(sector, "ceiling_pic", None))
-    if isinstance(ceiling_pic, int) and sky_flat_num >= 0 and ceiling_pic == sky_flat_num:
-        return True
-    if isinstance(ceiling_pic, str) and ceiling_pic.upper().startswith("F_SKY"):
-        return True
-    ceiling_name = getattr(sector, "ceiling_flat", None)
-    if isinstance(ceiling_name, str) and ceiling_name.upper().startswith("F_SKY"):
-        return True
-    return False
-
-
-def _get_sector_light(sector: Any) -> int:
-    if hasattr(sector, "light_level"):
-        return int(sector.light_level)
-    return int(getattr(sector, "lightlevel", 0))
-
-
-def _set_sector_light(sector: Any, value: int) -> None:
-    if hasattr(sector, "light_level"):
-        sector.light_level = int(value)
-    else:
-        sector.lightlevel = int(value)
-
-
-@dataclass(slots=True)
-class LightningState:
-    """Tracks Hexen MAPINFO lightning flashes and sector light boosts (p_anim.c)."""
-
-    enabled: bool = False
-    next_flash: int = 0
-    flash_count: int = 0
-    flash_light: int = 0
-    use_sky2: bool = False
-    sky_flat_num: int = -1
-    saved_sector_lights: list[int] = field(default_factory=list)
-    active_sector_mask: list[bool] = field(default_factory=list)
-
-    @property
-    def light_flash(self) -> int:
-        """Alias for flash_light when flash_count > 0, else 0."""
-        return self.flash_light if self.flash_count > 0 else 0
-
-    def init(self, enabled: bool, rng: Random | None = None, sky_flat_num: int = -1) -> None:
-        """Port of P_InitLightning (p_anim.c)."""
-        self.enabled = enabled
-        self.sky_flat_num = sky_flat_num
-        self.flash_count = 0
-        self.flash_light = 0
-        self.use_sky2 = False
-        self.saved_sector_lights.clear()
-        self.active_sector_mask.clear()
-
-        if not enabled:
-            self.next_flash = 0
-            return
-
-        r_val = rng.p_random() if rng is not None else 0
-        # don't flash at level start: ((P_Random() & 15) + 1) * 35
-        self.next_flash = ((r_val & 15) + 1) * 35
-
-    def force_lightning(
-        self,
-        mode: int = 0,
-        rng: Random | None = None,
-        sectors: Sequence[Any] | None = None,
-    ) -> None:
-        """Port of P_ForceLightning (p_anim.c)."""
-        if mode == 1:
-            self.next_flash = 0
-        else:
-            self.trigger_flash(rng=rng, sectors=sectors)
-
-    def trigger_flash(
-        self,
-        rng: Random | None = None,
-        sectors: Sequence[Any] | None = None,
-    ) -> bool:
-        """Port of P_LightningFlash (p_anim.c).
-
-        Swaps active sky to sky2 for the duration of the flash, boosts outdoor sky
-        sectors and indoor lightning sectors (specials 198, 199), and schedules
-        the next flash.
-        """
-        r1 = rng.p_random() if rng is not None else 0
-        self.flash_light = 200 + (r1 & 31)
-        self.use_sky2 = True
-
-        self.saved_sector_lights.clear()
-        self.active_sector_mask.clear()
-        found_sector = False
-
-        if sectors is not None:
-            for sec in sectors:
-                light = _get_sector_light(sec)
-                special = int(getattr(sec, "special", 0))
-                is_sky = _is_sky_sector(sec, self.sky_flat_num)
-                self.saved_sector_lights.append(light)
-
-                if is_sky or special in (
-                    LIGHTNING_SPECIAL,
-                    LIGHTNING_SPECIAL2,
-                    SKYCHANGE_SPECIAL,
-                ):
-                    if special == LIGHTNING_SPECIAL:
-                        new_light = min(self.flash_light, min(255, light + 64))
-                    elif special == LIGHTNING_SPECIAL2:
-                        new_light = min(self.flash_light, min(255, light + 32))
-                    else:
-                        new_light = self.flash_light
-
-                    if new_light >= light:
-                        _set_sector_light(sec, new_light)
-                        self.active_sector_mask.append(True)
-                        found_sector = True
-                    else:
-                        self.active_sector_mask.append(False)
-                else:
-                    self.active_sector_mask.append(False)
-        else:
-            # If no sector array is bound, still allow sky flash state for rendering
-            found_sector = True
-
-        if found_sector:
-            r2 = rng.p_random() if rng is not None else 0
-            self.flash_count = (r2 & 7) + 8
-        else:
-            self.use_sky2 = False
-            self.flash_count = 0
-
-        # Schedule next flash per P_LightningFlash in p_anim.c
-        r3 = rng.p_random() if rng is not None else 0
-        r4 = rng.p_random() if rng is not None else 0
-        if r3 < 50 and self.next_flash == 0:
-            self.next_flash = ((r4 & 7) + 16) * 35
-        else:
-            self.next_flash = ((r4 & 15) + 5) * 35
-
-        return found_sector
-
-    def tick(
-        self,
-        rng: Random | None = None,
-        sectors: Sequence[Any] | None = None,
-    ) -> bool:
-        """Advance lightning state by one simulation tic (P_AnimateSurfaces).
-
-        Returns True if a lightning flash is currently active on this tic.
-        """
-        if not self.enabled and self.flash_count <= 0:
-            return False
-
-        if self.flash_count > 0:
-            self.flash_count -= 1
-            if self.flash_count > 0:
-                if sectors is not None:
-                    for i, sec in enumerate(sectors):
-                        if i < len(self.active_sector_mask) and self.active_sector_mask[i]:
-                            saved = self.saved_sector_lights[i]
-                            cur = _get_sector_light(sec)
-                            if cur > saved + 4:
-                                _set_sector_light(sec, cur - 4)
-                return True
-
-            # Flash ended: restore sector light levels and revert to sky1
-            if sectors is not None:
-                for i, sec in enumerate(sectors):
-                    if i < len(self.active_sector_mask) and self.active_sector_mask[i]:
-                        _set_sector_light(sec, self.saved_sector_lights[i])
-            self.use_sky2 = False
-            return False
-
-        self.next_flash -= 1
-        if self.next_flash <= 0:
-            self.trigger_flash(rng=rng, sectors=sectors)
-        return self.flash_count > 0
 
 
 class SkyRenderer:
     """Renders Hexen single-layer and double-layer scrolling skies (T4.6).
 
     Supports:
-    - Single sky (``sky1``, or ``sky2`` during a lightning flash / ``SKYCHANGE_SPECIAL``)
+    - Single sky (``sky1``, or ``sky2`` during a lightning flash)
     - Double sky (``doublesky`` in ``MAPINFO``): ``sky1`` rendered in front with palette
       index 0 transparent over ``sky2``
-    - Independent 16.16 fixed-point horizontal scroll deltas per tic
+    - Horizontal scroll from the sim's 16.16 column offsets
     - Cylindrical yaw projection + vertical pitch/lookdir offset without perspective
       seam distortion
     """
@@ -247,12 +64,11 @@ class SkyRenderer:
 
         self.sky1_tex: GpuTexture | None = None
         self.sky2_tex: GpuTexture | None = None
-        self.sky1_scroll_delta: int = 0
-        self.sky2_scroll_delta: int = 0
         self.sky1_column_offset: int = 0
         self.sky2_column_offset: int = 0
         self.double_sky: bool = False
-        self.lightning = LightningState()
+        # Sky1Texture swapped to the map's sky2 during a lightning flash (P_LightningFlash).
+        self.use_sky2: bool = False
 
         self._quad_vbo: moderngl.Buffer | None = None
         self._quad_vao: moderngl.VertexArray | None = None
@@ -271,59 +87,31 @@ class SkyRenderer:
         sky1_tex: GpuTexture,
         sky2_tex: GpuTexture | None = None,
         *,
-        sky1_scroll_delta: int = 0,
-        sky2_scroll_delta: int = 0,
         double_sky: bool = False,
-        lightning: bool = False,
-        rng: Random | None = None,
-        sky_flat_num: int = -1,
     ) -> None:
-        """Configure sky textures, fixed-point scroll speeds, doublesky, and lightning."""
+        """Set the map's sky textures and doublesky flag (texture part of R_InitSky)."""
         self.sky1_tex = sky1_tex
         self.sky2_tex = sky2_tex if sky2_tex is not None else sky1_tex
-        self.sky1_scroll_delta = int(sky1_scroll_delta)
-        self.sky2_scroll_delta = int(sky2_scroll_delta)
         self.sky1_column_offset = 0
         self.sky2_column_offset = 0
         self.double_sky = bool(double_sky)
-        self.lightning.init(enabled=lightning, rng=rng, sky_flat_num=sky_flat_num)
+        self.use_sky2 = False
 
-    def configure_from_mapinfo(
-        self,
-        map_entry: MapInfo,
-        tex_mgr: GpuTextureManager,
-        *,
-        rng: Random | None = None,
-        sky_flat_num: int = -1,
-    ) -> None:
-        """Configure sky parameters from a parsed MAPINFO MapInfo (R_InitSky)."""
+    def configure_from_mapinfo(self, map_entry: MapInfo, tex_mgr: GpuTextureManager) -> None:
+        """Set sky textures from a parsed MAPINFO entry (R_InitSky)."""
         sky1 = self.resolve_sky_texture(tex_mgr, map_entry.sky1_texture)
         sky2 = (
             self.resolve_sky_texture(tex_mgr, map_entry.sky2_texture)
             if map_entry.sky2_texture
             else sky1
         )
-        self.set_skies(
-            sky1,
-            sky2,
-            sky1_scroll_delta=map_entry.sky1_scroll_delta,
-            sky2_scroll_delta=map_entry.sky2_scroll_delta,
-            double_sky=map_entry.double_sky,
-            lightning=map_entry.lightning,
-            rng=rng,
-            sky_flat_num=sky_flat_num,
-        )
+        self.set_skies(sky1, sky2, double_sky=map_entry.double_sky)
 
-    def tick(
-        self,
-        rng: Random | None = None,
-        sectors: Sequence[Any] | None = None,
-    ) -> None:
-        """Advance sky scroll offsets and lightning flash timers by one tic (P_AnimateSurfaces)."""
-        # In p_anim.c: Sky1ColumnOffset += Sky1ScrollDelta; Sky2ColumnOffset += Sky2ScrollDelta;
-        self.sky1_column_offset = (self.sky1_column_offset + self.sky1_scroll_delta) & 0xFFFFFFFF
-        self.sky2_column_offset = (self.sky2_column_offset + self.sky2_scroll_delta) & 0xFFFFFFFF
-        self.lightning.tick(rng=rng, sectors=sectors)
+    def sync_from_animator(self, animator: SurfaceAnimator) -> None:
+        """Take the sky column offsets and the lightning sky swap from the sim."""
+        self.sky1_column_offset = animator.sky1_column_offset & 0xFFFFFFFF
+        self.sky2_column_offset = animator.sky2_column_offset & 0xFFFFFFFF
+        self.use_sky2 = animator.sky_flash
 
     @property
     def sky1_offset_texels(self) -> float:
@@ -397,7 +185,7 @@ class SkyRenderer:
         self._u_sky2_offset.value = self.sky2_offset_texels
         self._u_double_sky.value = 1 if self.double_sky else 0
 
-        use_sky2 = self.lightning.use_sky2 if use_sky2_override is None else use_sky2_override
+        use_sky2 = self.use_sky2 if use_sky2_override is None else use_sky2_override
         self._u_use_sky2.value = 1 if use_sky2 else 0
         self._u_palette_index.value = int(palette_index)
         self._u_gamma.value = float(gamma)

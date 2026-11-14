@@ -167,6 +167,16 @@ class GameFlow:
         info = self.mapinfo.get(map_num) if self.mapinfo is not None else None
         return bool(info is not None and info.lightning)
 
+    def map_sky_scroll(self, map_num: int) -> dict[str, int]:
+        """P_GetMapSky1ScrollDelta / P_GetMapSky2ScrollDelta as setup_level keywords."""
+        info = self.mapinfo.get(map_num) if self.mapinfo is not None else None
+        if info is None:
+            return {}
+        return {
+            "sky1_scroll_delta": info.sky1_scroll_delta,
+            "sky2_scroll_delta": info.sky2_scroll_delta,
+        }
+
     def next_map(self, map_num: int) -> int:
         """Port of P_TranslateMap(P_GetMapNextMap(map)) (p_tick.c:72)."""
         info = self.mapinfo.get(map_num) if self.mapinfo is not None else None
@@ -307,7 +317,11 @@ class GameFlow:
         sim.cluster = self.map_cluster(map_num)
         self.hub.current_cluster = sim.cluster
         sim.surface_animator = self.surface_animator
-        sim.setup_level(player_nums=(0,), lightning=self.map_lightning(map_num))
+        sim.setup_level(
+            player_nums=(0,),
+            lightning=self.map_lightning(map_num),
+            **self.map_sky_scroll(map_num),
+        )
         self._enter_level(sim)
 
     def _enter_level(self, sim: GameSim) -> None:
@@ -436,7 +450,7 @@ class GameFlow:
         sim.map_num = map_num
         sim.cluster = cluster
         sim.surface_animator = self.surface_animator
-        sim.setup_level(lightning=self.map_lightning(map_num))
+        sim.setup_level(lightning=self.map_lightning(map_num), **self.map_sky_scroll(map_num))
         remove_all_thinkers(sim)
         rng_state = sim.rng.get_state()
         unarchive(sim)

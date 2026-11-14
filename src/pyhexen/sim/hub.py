@@ -152,7 +152,11 @@ class HubManager:
         # That clears the RNG, fills player starts and rebuilds tagged lines.
         dest_sim.surface_animator = sim.surface_animator  # P_InitFTAnims state carries over
         dest_info = mapinfo_table.get(res.target_map) if mapinfo_table is not None else None
-        dest_sim.setup_level(lightning=bool(dest_info is not None and dest_info.lightning))
+        dest_sim.setup_level(
+            lightning=bool(dest_info is not None and dest_info.lightning),
+            sky1_scroll_delta=dest_info.sky1_scroll_delta if dest_info is not None else 0,
+            sky2_scroll_delta=dest_info.sky2_scroll_delta if dest_info is not None else 0,
+        )
         if self.has_map(res.target_map):
             # RemoveAllThinkers, then unarchive. The RNG is not part of a vanilla
             # map archive, so keep the post-setup RNG state.

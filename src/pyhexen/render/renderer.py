@@ -17,7 +17,6 @@ import numpy as np
 
 from pyhexen.core.events import EventBus
 from pyhexen.core.fixed import FRACUNIT
-from pyhexen.core.random import Random
 from pyhexen.render.camera import Camera
 from pyhexen.render.chunks import ChunkManager, DrawBatch, SectorChunk
 from pyhexen.render.context import RenderContext
@@ -29,7 +28,7 @@ from pyhexen.render.polyobj import (
     interpolate_coord,
     poly_model_to_gl_matrix,
 )
-from pyhexen.render.sky import LIGHTNING_SPECIAL, LIGHTNING_SPECIAL2, SkyRenderer
+from pyhexen.render.sky import SkyRenderer
 from pyhexen.render.sprites import SpriteRenderer
 from pyhexen.render.textures import (
     SURFACE_FLAT,
@@ -43,7 +42,7 @@ from pyhexen.wad.mapinfo import MapInfo, load_mapinfo
 from pyhexen.wad.palette import save_png
 from pyhexen.wad.sprites import SpriteRegistry
 from pyhexen.wad.wadfile import WadFile, WadStack
-from pyhexen.world.level import Level, Sector
+from pyhexen.world.level import Level
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -227,7 +226,6 @@ void main() {
         map_info: MapInfo | None = None,
         *,
         event_bus: EventBus | None = None,
-        rng: Random | None = None,
     ) -> None:
         """Initialize GPU textures, sector chunks, sky, and sprite registry for `level`."""
         self._release_chunk_vaos()
@@ -259,20 +257,12 @@ void main() {
             self.use_fullbright = not self.use_fogmap
             sky1 = self._resolve_sky_safe(map_info.sky1_texture)
             sky2 = self._resolve_sky_safe(map_info.sky2_texture) if map_info.sky2_texture else sky1
-            self.sky_renderer.set_skies(
-                sky1,
-                sky2,
-                sky1_scroll_delta=map_info.sky1_scroll_delta,
-                sky2_scroll_delta=map_info.sky2_scroll_delta,
-                double_sky=map_info.double_sky,
-                lightning=map_info.lightning,
-                rng=rng,
-            )
+            self.sky_renderer.set_skies(sky1, sky2, double_sky=map_info.double_sky)
         else:
             self.use_fogmap = False
             self.use_fullbright = True
             sky1 = self._resolve_sky_safe("SKY1")
-            self.sky_renderer.set_skies(sky1, sky1, double_sky=False, lightning=False, rng=rng)
+            self.sky_renderer.set_skies(sky1, sky1, double_sky=False)
 
         self.chunks = ChunkManager(
             level,
@@ -379,27 +369,19 @@ void main() {
             pass
         return self._get_fallback_texture()
 
-    def _sector_lightning_extralight(self, sector: Sector) -> int:
-        """Compute temporary extralight boost (0..15) for a sector during a lightning flash."""
-        flash = self.sky_renderer.lightning.light_flash
-        if flash <= 0:
-            return 0
-        is_sky = sector.ceiling_pic.upper().startswith("F_SKY")
-        if is_sky:
-            delta = max(0, flash - sector.light_level)
-            return delta >> 4
-        if sector.special == LIGHTNING_SPECIAL:
-            return 4  # +64 light units = +4 lightnum steps
-        if sector.special == LIGHTNING_SPECIAL2:
-            return 2  # +32 light units = +2 lightnum steps
-        return 0
+    def sync_sim_animation(self, sim: GameSim) -> None:
+        """Show the sim's surface animation state (P_AnimateSurfaces runs in the sim).
 
-    def tick(self, level_time: int = 0, rng: Random | None = None) -> None:
-        """Advance texture/flat animations and sky scrolling/lightning by one tic (35 Hz)."""
+        Animated flats and wall textures follow the animator's translation tables, and the
+        sky follows its column offsets and the lightning sky swap. Lightning light levels
+        are already in the sectors. The renderer never advances any of it itself.
+        """
+        animator = getattr(sim, "surface_animator", None)
+        if animator is None:
+            return
         if self.tex_mgr is not None:
-            self.tex_mgr.update_animations(level_time, rng)
-        sectors = self.level.sectors if self.level is not None else None
-        self.sky_renderer.tick(rng=rng, sectors=sectors)
+            self.tex_mgr.apply_animator(animator)
+        self.sky_renderer.sync_from_animator(animator)
 
     def render_frame(
         self,
@@ -418,6 +400,8 @@ void main() {
         if self.chunks is None or self.tex_mgr is None or self.level is None:
             self.context.clear(0.0, 0.0, 0.0, 1.0)
             return
+        if sim is not None:
+            self.sync_sim_animation(sim)
 
         # 1. Rebuild any dirty sector chunks
         rebuilt = self.chunks.rebuild_dirty(self.ctx)
@@ -522,7 +506,6 @@ void main() {
         self.world_shader.set_camera(view, proj)
         self.world_shader.set_model(None)
         self.world_shader.set_light_override(-1.0)
-        has_lightning = bool(self.sky_renderer.lightning.light_flash > 0)
         last_sec_extra = -999999
         last_bound_tex = None
         last_tex_w = -1
@@ -535,10 +518,7 @@ void main() {
             world_vao = self._get_chunk_world_vao(chunk)
             if world_vao is None:
                 continue
-            sector = self.level.sectors[chunk.sector_index]
-            sec_extra = extralight + (
-                self._sector_lightning_extralight(sector) if has_lightning else 0
-            )
+            sec_extra = extralight
             if sec_extra != last_sec_extra:
                 self.world_shader.set_lighting(
                     palette_index=palette_index,
@@ -577,10 +557,7 @@ void main() {
             world_vao = self._get_chunk_world_vao(chunk)
             if world_vao is None:
                 continue
-            sector = self.level.sectors[chunk.sector_index]
-            sec_extra = extralight + (
-                self._sector_lightning_extralight(sector) if has_lightning else 0
-            )
+            sec_extra = extralight
             if sec_extra != last_sec_extra:
                 self.world_shader.set_lighting(
                     palette_index=palette_index,
@@ -766,9 +743,7 @@ void main() {
                     else (po.subsector.sector if po.subsector is not None else None)
                 )
             sec_light = float(sector.light_level) if sector is not None else 160.0
-            sec_extra = extralight + (
-                self._sector_lightning_extralight(sector) if sector is not None else 0
-            )
+            sec_extra = extralight
 
             self.world_shader.set_light_override(sec_light)
             self.world_shader.set_lighting(

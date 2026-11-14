@@ -96,6 +96,13 @@ class SurfaceAnimator:
         else:
             self.texture_translation[seq.base_name] = frames[0].frame_name.upper()
 
+    def init_sky(self, sky1_scroll_delta: int = 0, sky2_scroll_delta: int = 0) -> None:
+        """Scroll part of R_InitSky (r_plane.c), called by G_InitNew at level load."""
+        self.sky1_scroll_delta = sky1_scroll_delta
+        self.sky2_scroll_delta = sky2_scroll_delta
+        self.sky1_column_offset = 0
+        self.sky2_column_offset = 0
+
     def init_lightning(self, sim: GameSim, enabled: bool = False) -> None:
         """Port of P_InitLightning (p_anim.c)."""
         self.lightning_flash = 0

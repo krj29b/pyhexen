@@ -12,17 +12,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import moderngl
 import numpy as np
 
-from pyhexen.core.random import Random
 from pyhexen.wad.animdefs import AnimDef, load_animdefs
 from pyhexen.wad.flats import FlatRegistry
 from pyhexen.wad.palette import load_colormap, load_playpal
 from pyhexen.wad.picture import Picture, decode_picture
 from pyhexen.wad.textures import TextureRegistry
 from pyhexen.wad.wadfile import WadFile, WadStack
+
+if TYPE_CHECKING:
+    from pyhexen.sim.specials.anim import SurfaceAnimator
 
 # Lighting constants from r_local.h / r_main.c
 LIGHTLEVELS = 16
@@ -95,15 +98,16 @@ class GpuTexture:
 
 
 @dataclass(slots=True)
-class _ActiveAnim:
-    """Runtime animation state for a single ANIMDEFS sequence (port of anim_t in p_anim.c)."""
+class _AnimTargets:
+    """Where an ANIMDEFS sequence's frames point (the static part of anim_t in p_anim.c).
+
+    `frames` maps the sim's frame name (the ANIMDEFS pic number, or a texture name) to a
+    flat or wall texture index. The running state lives in the sim's SurfaceAnimator.
+    """
 
     is_flat: bool
     base_index: int
-    # Tuple of (target_index, tics, rand_min, rand_max)
-    frames: tuple[tuple[int, int, int, int], ...]
-    current_frame: int
-    tics_remaining: int
+    frames: dict[str, int]
 
 
 class GpuTextureManager:
@@ -198,7 +202,7 @@ class GpuTextureManager:
         # Parse and initialize ANIMDEFS sequences (P_InitFTAnims in p_anim.c)
         if animdefs is None and wad is not None and wad.find("ANIMDEFS") is not None:
             animdefs = load_animdefs(wad)
-        self._active_anims: list[_ActiveAnim] = []
+        self._anim_targets: dict[tuple[bool, str], _AnimTargets] = {}
         self.animated_wall_indices: set[int] = set()
         self.animated_flat_indices: set[int] = set()
         if animdefs:
@@ -216,88 +220,51 @@ class GpuTextureManager:
                     tex.mask_tex.filter = flt
 
     def _init_anims(self, animdefs: list[AnimDef]) -> None:
-        """Port of P_InitFTAnims (p_anim.c): resolve ANIMDEFS into runtime state."""
+        """Resolve ANIMDEFS frames to texture indices (the lookup half of P_InitFTAnims)."""
         for anim in animdefs:
             if not anim.frames:
                 continue
-            if not anim.is_flat:
-                if self.texture_registry is None:
-                    continue
-                base_idx = self.texture_registry.check_num_for_name(anim.name)
-                if base_idx <= 0:
-                    continue
-                resolved: list[tuple[int, int, int, int]] = []
-                valid = True
-                for frame in anim.frames:
-                    if isinstance(frame.index, int):
-                        target = base_idx + frame.index - 1
-                    else:
-                        target = self.texture_registry.check_num_for_name(frame.index)
-                    if target <= 0 or target >= len(self.texture_registry):
-                        valid = False
-                        break
-                    resolved.append((target, frame.tics, frame.rand_min, frame.rand_max))
-                if valid and resolved:
-                    self._active_anims.append(
-                        _ActiveAnim(
-                            is_flat=False,
-                            base_index=base_idx,
-                            frames=tuple(resolved),
-                            current_frame=len(resolved) - 1,
-                            tics_remaining=1,
-                        )
-                    )
-            else:
-                if self.flat_registry is None:
-                    continue
-                base_idx = self.flat_registry.check_num_for_name(anim.name)
-                if base_idx < 0:
-                    continue
-                resolved = []
-                valid = True
-                for frame in anim.frames:
-                    if isinstance(frame.index, int):
-                        target = base_idx + frame.index - 1
-                    else:
-                        target = self.flat_registry.check_num_for_name(frame.index)
-                    if target < 0 or target >= len(self.flat_registry):
-                        valid = False
-                        break
-                    resolved.append((target, frame.tics, frame.rand_min, frame.rand_max))
-                if valid and resolved:
-                    self._active_anims.append(
-                        _ActiveAnim(
-                            is_flat=True,
-                            base_index=base_idx,
-                            frames=tuple(resolved),
-                            current_frame=len(resolved) - 1,
-                            tics_remaining=1,
-                        )
-                    )
-        self.animated_wall_indices = {a.base_index for a in self._active_anims if not a.is_flat}
-        self.animated_flat_indices = {a.base_index for a in self._active_anims if a.is_flat}
+            registry = self.flat_registry if anim.is_flat else self.texture_registry
+            if registry is None:
+                continue
+            base_idx = registry.check_num_for_name(anim.name)
+            if base_idx < 0 or (not anim.is_flat and base_idx == 0):
+                continue
+            frames: dict[str, int] = {}
+            for frame in anim.frames:
+                if isinstance(frame.index, int):
+                    target = base_idx + frame.index - 1
+                else:
+                    target = registry.check_num_for_name(frame.index)
+                if target < 0 or target >= len(registry) or (not anim.is_flat and target == 0):
+                    frames = {}
+                    break
+                frames[str(frame.index).upper()] = target
+            if frames:
+                self._anim_targets[(anim.is_flat, anim.name.upper())] = _AnimTargets(
+                    is_flat=anim.is_flat, base_index=base_idx, frames=frames
+                )
+        anims = self._anim_targets.values()
+        self.animated_wall_indices = {a.base_index for a in anims if not a.is_flat}
+        self.animated_flat_indices = {a.base_index for a in anims if a.is_flat}
 
-    def update_animations(self, level_time: int = 0, rng: Random | None = None) -> None:
-        """Advance texture/flat animation translation tables by one tic (P_AnimateSurfaces).
+    def apply_animator(self, animator: SurfaceAnimator) -> None:
+        """Copy the sim's flat and texture translations into the GPU lookup tables.
 
-        Preserves exact ``P_Random`` consumption order from ``p_anim.c`` when random-duration
-        frames transition.
+        The sim (P_AnimateSurfaces) advances the sequences, including their P_Random
+        durations; the renderer only shows the current frame.
         """
-        _ = level_time
-        for anim in self._active_anims:
-            anim.tics_remaining -= 1
-            if anim.tics_remaining <= 0:
-                anim.current_frame = (anim.current_frame + 1) % len(anim.frames)
-                target_idx, tics, rand_min, rand_max = anim.frames[anim.current_frame]
-                if rand_max > 0:
-                    r_val = rng.p_random() if rng is not None else 0
-                    anim.tics_remaining = rand_min + (r_val % (rand_max - rand_min + 1))
-                else:
-                    anim.tics_remaining = max(1, tics)
-                if anim.is_flat:
-                    self.flat_translation[anim.base_index] = target_idx
-                else:
-                    self.wall_translation[anim.base_index] = target_idx
+        for is_flat, translation, table in (
+            (True, animator.flat_translation, self.flat_translation),
+            (False, animator.texture_translation, self.wall_translation),
+        ):
+            for base_name, frame_name in translation.items():
+                anim = self._anim_targets.get((is_flat, base_name))
+                if anim is None:
+                    continue
+                target = anim.frames.get(frame_name)
+                if target is not None:
+                    table[anim.base_index] = target
 
     def upload_indexed(
         self,

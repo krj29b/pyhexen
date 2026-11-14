@@ -166,3 +166,26 @@ def test_lightning_setup_draws_one_random_number() -> None:
     assert lit.rng.prndindex == plain.rng.prndindex + 1
     assert lit.surface_animator.level_has_lightning
     assert lit.surface_animator.next_lightning_flash % 35 == 0
+
+
+def test_lightning_flash_raises_decays_and_restores_sky_sectors() -> None:
+    """P_LightningFlash: sky sectors jump to flashLight, drop 4 a tic, then are restored.
+
+    The renderer only reads this state (T15.6d), so the sim is the one place it is tested.
+    """
+    sim = GameSim(level=_level(_room(ceiling_pic="F_SKY", light=120)))
+    sim.setup_level(lightning=True)
+    animator = sim.surface_animator
+    sector = sim.level.sectors[0]
+    animator.force_lightning()
+    sim.tick([])
+    assert animator.sky_flash
+    flash = sector.light_level
+    assert 200 <= flash <= 231
+    assert animator.saved_light_levels == {0: 120}
+    sim.tick([])
+    assert sector.light_level == flash - 4
+    while animator.lightning_flash > 0:
+        sim.tick([])
+    assert sector.light_level == 120
+    assert not animator.sky_flash

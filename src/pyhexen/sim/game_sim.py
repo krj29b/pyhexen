@@ -92,18 +92,27 @@ class GameSim:
             except Exception:
                 self.acs_vm = None
 
-    def setup_level(self, player_nums: Sequence[int] = (), *, lightning: bool = False) -> None:
+    def setup_level(
+        self,
+        player_nums: Sequence[int] = (),
+        *,
+        lightning: bool = False,
+        sky1_scroll_delta: int = 0,
+        sky2_scroll_delta: int = 0,
+    ) -> None:
         """Map-entry setup shared by new games and map changes.
 
         Port of the level part of G_InitNew (g_game.c) and P_SetupLevel (p_setup.c):
-        M_ClearRandom, P_LoadThings, P_LoadACScripts (open scripts), P_SpawnSpecials,
-        P_InitLightning. The surface animator (P_InitFTAnims) is set up once by the caller.
+        R_InitSky (scroll deltas from MAPINFO), M_ClearRandom, P_LoadThings, P_LoadACScripts
+        (open scripts), P_SpawnSpecials, P_InitLightning. The surface animator
+        (P_InitFTAnims) is set up once by the caller.
         Players listed in `player_nums` are spawned at their starts, in thing order.
         Polyobjects are already initialised by `load_level`.
         """
         from pyhexen.sim.mobj import spawn_map_things
         from pyhexen.sim.specials.sector_specials import p_spawn_specials
 
+        self.surface_animator.init_sky(sky1_scroll_delta, sky2_scroll_delta)
         self.rng.clear()
         spawn_map_things(self, player_nums)
         if self.acs_vm is not None:

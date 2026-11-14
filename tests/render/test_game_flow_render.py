@@ -82,7 +82,7 @@ def test_flow_renders_every_state_across_a_map_change() -> None:
 
         def on_level_loaded(sim: GameSim, info: MapInfo | None) -> None:
             assert sim.level is not None
-            renderer.load_map(stack, sim.level, info, event_bus=sim.events, rng=sim.rng)
+            renderer.load_map(stack, sim.level, info, event_bus=sim.events)
             loaded.append(sim.level.name)
 
         flow.on_level_loaded = on_level_loaded

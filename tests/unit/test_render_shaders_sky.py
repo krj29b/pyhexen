@@ -16,12 +16,7 @@ from tests.fixtures.wadbuilder import PatchPlacement, TextureDef, WadBuilder
 from pyhexen.core.fixed import FRACUNIT
 from pyhexen.core.random import Random
 from pyhexen.render.context import RenderContext
-from pyhexen.render.sky import (
-    LIGHTNING_SPECIAL,
-    LIGHTNING_SPECIAL2,
-    LightningState,
-    SkyRenderer,
-)
+from pyhexen.render.sky import SkyRenderer
 from pyhexen.render.textures import (
     SURFACE_FLAT,
     SURFACE_MASKED_WALL,
@@ -30,15 +25,21 @@ from pyhexen.render.textures import (
     WorldShaderProgram,
     compute_colormap_row,
 )
+from pyhexen.sim.specials.anim import SurfaceAnimator, load_surface_animator
 from pyhexen.wad.wadfile import WadStack
 
 
 @dataclass
-class _DummySector:
-    lightlevel: int
-    special: int = 0
-    ceilingpic: int = 0
-    ceiling_flat: str = "CEIL01"
+class _AnimSim:
+    """The parts of a GameSim that SurfaceAnimator.tick reads when there is no lightning."""
+
+    rng: Random
+    level: None = None
+    level_time: int = 0
+
+
+def _tick(animator: SurfaceAnimator, sim: _AnimSim) -> None:
+    animator.tick(sim)  # type: ignore[arg-type]
 
 
 def _read_pixels(rctx: RenderContext) -> np.ndarray:
@@ -122,26 +123,37 @@ def test_gpu_texture_manager_uploads_and_animdefs(tmp_path: Path) -> None:
                 assert f0.width == 64
                 assert f0.height == 64
 
+                # The sim's animator runs the sequences (and their P_Random draws);
+                # the texture manager only copies the current frames.
+                assert mgr.animated_wall_indices == {1}
+                assert mgr.animated_flat_indices == {0}
+                animator = load_surface_animator(wad)
+                sim = _AnimSim(rng=Random())
+
                 # Tick 1 advances from initial frame (last) to frame 0 (pic 1 -> base_idx)
-                rng = Random()
-                mgr.update_animations(1, rng)
+                _tick(animator, sim)
+                mgr.apply_animator(animator)
                 assert mgr.wall_translation[1] == 1
                 assert mgr.flat_translation[0] == 0
 
                 # WALLA1 frame 0 has tics=3 -> ticks 2, 3 stay at 1; tick 4 switches to 2
                 # FLATA1 frame 0 has tics=2 -> tick 2 stays at 0; tick 3 switches to 1 (rand 4..8)
-                mgr.update_animations(2, rng)
+                _tick(animator, sim)
+                mgr.apply_animator(animator)
                 assert mgr.wall_translation[1] == 1
                 assert mgr.flat_translation[0] == 0
 
-                mgr.update_animations(3, rng)
+                _tick(animator, sim)
+                mgr.apply_animator(animator)
                 assert mgr.wall_translation[1] == 1
                 assert mgr.flat_translation[0] == 1
-                assert rng.prndindex == 1  # consumed exactly 1 P_Random call for rand 4..8!
+                assert sim.rng.prndindex == 1  # the sim drew the one P_Random for rand 4..8
 
-                mgr.update_animations(4, rng)
+                _tick(animator, sim)
+                mgr.apply_animator(animator)
                 assert mgr.wall_translation[1] == 2
                 assert mgr.get_wall_texture("WALLA1", translated=True).name == "WALLA2"
+                assert sim.rng.prndindex == 1  # applying frames never touches the RNG
             finally:
                 mgr.release()
     finally:
@@ -341,13 +353,7 @@ def test_sky_renderer_single_double_and_scroll(tmp_path: Path) -> None:
                     assert pal0_110 not in colors_single
 
                     # 2. Double sky: wherever sky1 has index 0, sky2 (index 110) shows through!
-                    sky.set_skies(
-                        sky1_tex,
-                        sky2_tex,
-                        sky1_scroll_delta=64 * FRACUNIT,
-                        sky2_scroll_delta=32 * FRACUNIT,
-                        double_sky=True,
-                    )
+                    sky.set_skies(sky1_tex, sky2_tex, double_sky=True)
                     rctx.clear(0.0, 0.0, 0.0)
                     sky.render_fullscreen_quad(mgr, camera_yaw=0.0)
                     fb_double = _read_pixels(rctx)
@@ -355,10 +361,20 @@ def test_sky_renderer_single_double_and_scroll(tmp_path: Path) -> None:
                     assert pal0_0 not in colors_double
                     assert colors_double.issubset({pal0_60, pal0_110})
 
-                    # 3. Scrolling ticks advance column offsets
-                    sky.tick()
+                    # 3. Scroll offsets and the lightning sky swap come from the sim
+                    animator = SurfaceAnimator()
+                    animator.init_sky(64 * FRACUNIT, 32 * FRACUNIT)
+                    _tick(animator, _AnimSim(rng=Random()))
+                    sky.sync_from_animator(animator)
                     assert sky.sky1_offset_texels == pytest.approx(64.0)
                     assert sky.sky2_offset_texels == pytest.approx(32.0)
+                    assert sky.use_sky2 is False
+                    animator.sky_flash = True
+                    sky.sync_from_animator(animator)
+                    assert sky.use_sky2 is True
+                    animator.sky1_column_offset = -FRACUNIT  # signed fixed_t in the sim
+                    sky.sync_from_animator(animator)
+                    assert sky.sky1_offset_texels == pytest.approx(-1.0)
                 finally:
                     sky1_tex.release()
                     sky2_tex.release()
@@ -367,49 +383,3 @@ def test_sky_renderer_single_double_and_scroll(tmp_path: Path) -> None:
                 mgr.release()
     finally:
         wad.close()
-
-
-def test_lightning_state_flash_and_sector_decay() -> None:
-    rng = Random()
-    state = LightningState()
-    state.init(enabled=True, rng=rng, sky_flat_num=99)
-    assert state.enabled is True
-    assert state.next_flash > 0
-    assert state.use_sky2 is False
-
-    sectors = [
-        _DummySector(lightlevel=120, special=0, ceilingpic=99),  # outdoor sky sector
-        _DummySector(lightlevel=100, special=LIGHTNING_SPECIAL, ceilingpic=1),  # +64
-        _DummySector(lightlevel=100, special=LIGHTNING_SPECIAL2, ceilingpic=1),  # +32
-        _DummySector(lightlevel=80, special=0, ceilingpic=1),  # unaffected indoor sector
-    ]
-
-    # Force immediate lightning flash
-    state.force_lightning(mode=0, rng=rng, sectors=sectors)
-    assert state.use_sky2 is True
-    assert 200 <= state.flash_light <= 231
-    assert 8 <= state.flash_count <= 15
-    assert sectors[0].lightlevel == state.flash_light
-    assert sectors[1].lightlevel == 164
-    assert sectors[2].lightlevel == 132
-    assert sectors[3].lightlevel == 80
-
-    # Tick once during flash: boosted sectors decay by 4
-    initial_count = state.flash_count
-    active = state.tick(rng=rng, sectors=sectors)
-    assert active is True
-    assert state.flash_count == initial_count - 1
-    assert sectors[0].lightlevel == state.flash_light - 4
-    assert sectors[1].lightlevel == 160
-    assert sectors[2].lightlevel == 128
-    assert sectors[3].lightlevel == 80
-
-    # Tick until flash ends: original sector lights are restored and use_sky2 resets to False
-    while state.flash_count > 0:
-        state.tick(rng=rng, sectors=sectors)
-
-    assert state.use_sky2 is False
-    assert sectors[0].lightlevel == 120
-    assert sectors[1].lightlevel == 100
-    assert sectors[2].lightlevel == 100
-    assert sectors[3].lightlevel == 80

@@ -747,3 +747,16 @@ def test_boss_helpers_location_teleport_and_korax_missile(sim: GameSim) -> None:
     km = spawn_korax_missile(sim, mo.x, mo.y, mo.z + 32 * FRACUNIT, mo, dest, MobjType.MT_DEMONFX1)
     assert km is not None
     assert km.target is mo
+
+
+def test_minotaur_roam_without_a_target_turns_instead_of_chasing(sim: GameSim) -> None:
+    """A_MinotaurRoam picks random directions (FaceMovementDirection); it never calls
+    P_NewChaseDir, which needs a target (T15.7: a summoned Maulotaur with nothing to
+    attack crashed the game)."""
+    mino = spawn_mobj(sim, 0, 0, 0, MobjType.MT_MINOTAUR)
+    mino.target = None
+    mino.special1 = None
+    for _ in range(200):
+        a_minotaurroam(sim, mino)
+        assert mino.target is None or mino.target.health > 0
+        assert mino.angle == (mino.movedir << 29) & 0xFFFFFFFF or mino.movedir >= 8

@@ -297,11 +297,16 @@ uv run python -m pyhexen.tools.mapview2d --iwad HEXEN.WAD --warp MAP01 --headles
 
 # Demo sync (see above)
 uv run python -m pyhexen.tools.demo_sync --help
+
+# Scripted playthrough checklist (exits, hubs, reborn, per-class soak with save/load);
+# see docs/PLAYTHROUGH.md
+uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --render
+uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --only exits --maps 2,3
 ```
 
 Development scripts live in `tools/`: `profile_perf.py` (profiling), `report_actions.py`
-(which action functions are ported), `playthrough_audit.py`, and the table/info generators
-`gen_tables.py` and `gen_info.py`.
+(which action functions are ported), and the table/info generators `gen_tables.py` and
+`gen_info.py`.
 
 > Exported PNGs and extracted lumps are game data. Keep them out of the repository
 > (`out/` is gitignored).

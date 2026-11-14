@@ -1,117 +1,128 @@
-# PyHexen Campaign Playthrough Verification (Milestone M6)
+# Playthrough checklist (T15.7, Milestone M6)
 
-This document records the full campaign playthrough audit across all 5 hubs,
-all 32 playable maps, and all 3 player classes (Fighter, Cleric, Mage) for **Milestone M6** (`T14.5`).
+M6 asks for a real playthrough of every hub with every class. That has two halves:
 
-## 1. Campaign Structure & Hub Overview
+* **T15.7a, scripted (done, 2026-11-14):** `python -m pyhexen.tools.playthrough` plays the
+  game through `GameFlow`, the same controller the window uses, with input given as
+  ticcmds. It checks every exit, hub persistence, the cluster change, reborn, and a
+  per-class bot run with save/load on every map. Results are below.
+* **T15.7b, manual (open):** a person finishes each hub with each class: puzzles, bosses,
+  weapon pieces, the finale. A script cannot judge that, and it cannot judge pictures or
+  sound. The checklist is in section 4. **M6 is met when T15.7b is done.**
 
-Hexen's campaign is organized into five non-linear hub clusters. Within each cluster,
-the player explores multiple levels via portals, solving puzzles that manipulate switches,
-doors, and polyobjects across interconnected maps. Passing through a cluster portal preserves
-core character statistics (health, armor, weapons, ammo, non-puzzle artifacts) while clearing
-hub-specific keys and puzzle items.
+The old T14.5 audit (`tools/playthrough_audit.py`: each map run for 35 tics with no input,
+hubs driven through `HubManager` directly) is gone; this replaces it.
 
-| Hub | Cluster | Name | Maps | Key Bosses / Objectives |
+## 1. Running it
+
+```powershell
+uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --render     # everything, ~7 min
+uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --only exits --maps 2,3
+uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --only soak --classes 2 --soak-seconds 120
+uv run pytest -m wad tests/wad/test_playthrough_iwad.py   # exits + hubs + reborn, ~30 s
+```
+
+The exit code is 1 if any check fails. `WARN` lines are explained in section 3.
+
+## 2. What each check does
+
+| Check | How | Passes when |
+|---|---|---|
+| **exit** (every exit line) | Start the map with `init_new`, put the player 24 to 96 units in front of the line (front side, as `Teleport_NewMap` requires), walk forward, then sit through the intermission. | The map named by the line (`G_Completed(args[0], args[1])`; no warp translation) loads with the player on the start for `args[1]`, or the finale starts for `Teleport_EndGame`. The new map then runs for one second. |
+| **exit** (ACS) | Scripts whose bytecode has an `LSPEC` pcode followed by an exit special are run with the player as activator. | The script leads to a real map (and to the right one when the bytecode names it). A candidate that never exits is a `WARN`: the scan can match operands. |
+| **hub** return | In one map of each hub, kill every monster, give all keys, wait 5 s for death animations, leave by an exit line, come back by the other map's exit line. | No corpse is lost (dormant monsters cannot be killed and scripts may spawn more, so the test is that the dead count never drops), the keys are kept, and the player is on the right start. |
+| **hub** cluster change | Leave with all keys through an exit into another cluster. | Keys are stripped (`G_PlayerExitMap`). |
+| **reborn** | Leave MAP01 (so a reborn slot exists), die, press use. Once per class. | The same map reloads with a live player at full health. |
+| **soak** | Every map, every class, 60 s of bot input with god mode, all weapons, mana and keys: walk, turn when stuck and every 5 s, press use every 12 tics, aim and fire at visible monsters, change weapon every 6 s. With `--render` a frame is drawn headlessly every 10 s. If the bot walks into an exit it follows it. | No exception; the player's sector link matches its position and it stays inside the sector under it (allowing vanilla's case of a solid thing over a step, see 3); the player moved. |
+| **save/load** (after each soak) | Save through the flow, play 2 s, load, play 2 s more. | The loaded state equals the saved one in the demo-trace fields (position, momentum, health, mobj count and hash, sector hash). The RNG index is left out: vanilla does not save it (`SV_LoadGame` runs `G_InitNew`, which clears it), so a loaded game does not replay the same input identically, in vanilla or here. |
+
+## 3. Results (v1.0 IWAD, 2026-11-14)
+
+**181 checks: 170 pass, 11 warn, 0 fail** (441 s with `--render`).
+
+| Map | Name | Cluster | Exit lines (pass / warn) | ACS exits | Fighter | Cleric | Mage |
+|---|---|---|---|---|---|---|---|
+| MAP01 | Winnowing Hall | 1 | 1 to 02 (1 / 0) | - | PASS | PASS | PASS |
+| MAP02 | Seven Portals | 1 | 2 to 06, 13 (1 / 1) | - | PASS | PASS | PASS |
+| MAP03 | Guardian of Ice | 1 | 2 to 04, 05 (0 / 2) | 1 ok, 1 unconfirmed | PASS | PASS | PASS |
+| MAP04 | Guardian of Fire | 1 | 1 to 02 (1 / 0) | 1 ok | PASS | PASS | PASS |
+| MAP05 | Guardian of Steel | 1 | 2 to 02 (2 / 0) | - | PASS | PASS | PASS |
+| MAP06 | Bright Crucible | 1 | 1 to 02 (1 / 0) | - | PASS | PASS | PASS |
+| MAP08 | Darkmere | 2 | 3 to 09, 10, 13 (3 / 0) | - | PASS | PASS | PASS |
+| MAP09 | Caves of Circe | 2 | 3 to 08, 10, 13 (3 / 0) | - | PASS | PASS | PASS |
+| MAP10 | Wastelands | 2 | 3 to 08, 09, 13 (2 / 1) | - | PASS | PASS | PASS |
+| MAP11 | Sacred Grove | 2 | 1 to 13 (1 / 0) | - | PASS | PASS | PASS |
+| MAP12 | Hypostyle | 2 | 2 to 13, 27 (2 / 0) | - | PASS | PASS | PASS |
+| MAP13 | Shadow Wood | 2 | 5 to 08, 09, 10, 11, 12 (5 / 0) | - | PASS | PASS | PASS |
+| MAP21 | Forsaken Outpost | 4 | 3 to 22, 24, 26 (3 / 0) | - | PASS | PASS | PASS |
+| MAP22 | Castle of Grief | 4 | 2 to 21, 24 (2 / 0) | 1 ok | PASS | PASS | PASS |
+| MAP23 | Gibbet | 4 | 3 to 22, 25, 35 (3 / 0) | 1 ok | PASS | PASS | PASS |
+| MAP24 | Effluvium | 4 | 4 to 21, 22, 23, 25 (2 / 2) | - | PASS | PASS | PASS |
+| MAP25 | Dungeons | 4 | 1 to 23 (1 / 0) | 1 ok | PASS | PASS | PASS |
+| MAP26 | Desolate Garden | 4 | 1 to 21 (1 / 0) | - | PASS | PASS | PASS |
+| MAP27 | Heresiarch's Seminary | 3 | 7 to 22, 28, 30, 31, 32, 33, 34 (7 / 0) | - | PASS | PASS | PASS |
+| MAP28 | Dragon Chapel | 3 | 3 to 27, 30, 34 (3 / 0) | - | PASS | PASS | PASS |
+| MAP30 | Griffin Chapel | 3 | 3 to 27, 28, 34 (3 / 0) | - | PASS | PASS | PASS |
+| MAP31 | Deathwind Chapel | 3 | 1 to 27 (1 / 0) | - | PASS | PASS | PASS |
+| MAP32 | Orchard of Lamentations | 3 | 1 to 27 (1 / 0) | - | PASS | PASS | PASS |
+| MAP33 | Silent Refectory | 3 | 1 to 27 (1 / 0) | - | PASS | PASS | PASS |
+| MAP34 | Wolf Chapel | 3 | 3 to 27, 28, 30 (3 / 0) | - | PASS | PASS | PASS |
+| MAP35 | Necropolis | 5 | 5 to 36, 37, 38, 39, 40 (4 / 1) | - | PASS | PASS | PASS |
+| MAP36 | Zedek's Tomb | 5 | 1 to 35 (1 / 0) | 1 ok | PASS | PASS | PASS |
+| MAP37 | Menelkir's Tomb | 5 | 1 to 35 (0 / 1) | - | PASS | PASS | PASS |
+| MAP38 | Traductus' Tomb | 5 | 1 to 35 (1 / 0) | - | PASS | PASS | PASS |
+| MAP39 | Vivarium | 5 | 1 to 35 (1 / 0) | - | PASS | PASS | PASS |
+| MAP40 | Dark Crucible | 5 | 1 to end (1 / 0) | - | PASS | PASS | PASS |
+| MAP41 | Maze (deathmatch) | 0 | none | - | PASS | PASS | PASS |
+
+Soak columns include the save/load check. Hub returns: MAP08 -> 09 -> 08, MAP21 -> 22 -> 21
+and MAP27 -> 31 -> 27 pass; MAP02 -> 06 -> 02 and MAP35 -> 38 -> 35 pass with a `WARN` (an
+exit had to be activated directly). Cluster change MAP02 -> MAP13 strips keys. Reborn passes
+for all three classes.
+
+**Why the 11 warnings are not bugs.** Nine exit lines (and with them two hub returns) cannot
+be walked over from a fresh start: the line sits behind a closed door or a lowered ceiling
+that the map opens later (MAP03 x2, MAP24 x2, MAP35, MAP37), behind a step higher than 24
+units (MAP02 line 197), or out of reach from the front (MAP10 line 1040). Activated the way a
+crossing activates them, they still lead to the right map and start. Whether the map opens them is part of
+the manual checklist. The ACS candidate in MAP03 script 11 is a false match of the bytecode
+scan (`Teleport_NewMap(32, 11)` is not a hub 1 destination).
+
+**Bugs found and fixed (T15.7.x):**
+
+* **T15.7.1** `A_MinotaurRoam` was a loose rewrite that called `P_NewChaseDir` without a
+  target, so a Maulotaur with nothing to fight crashed the game (`RuntimeError: P_NewChaseDir:
+  called with no target`, MAP10 and MAP35 soaks). Ported from p_enemy.c: random direction
+  changes with `FaceMovementDirection`, turning on a blocked move. `A_MinotaurLook` lost a
+  `CheckMinotaurAge` call that vanilla does not make. Regression test in
+  `test_monsters_bosses.py`.
+
+**Vanilla behaviour confirmed, not changed:** a player can stand up to 24 units below the floor
+of a step it walked onto while a solid monster hovers over the step: `P_CheckOnmobj` finds the
+monster and `P_MobjThinker` only stops the fall (MAP04, an afrit). It clears when the monster
+moves. Loaded games do not continue with the saved RNG index (see save/load above).
+
+**Not covered by the script:** puzzle items and switch puzzles, boss fights, the fourth
+weapon pieces, polyobject doors that need a puzzle, intermission text, the finale screens,
+music and sound, what frames look like (frames are drawn, not judged), menus, and the
+deathmatch map with more than one player.
+
+## 4. Manual checklist (T15.7b)
+
+Play each hub with each class at skill 3 (`--class fighter|cleric|mage`), from a new game,
+without warping, saving where you like. Tick a box when it works; file anything else as
+`T15.7.n` in PROGRESS.md with the map, position (F12 writes it next to the screenshot) and a
+save if possible. Run the script after each fix.
+
+| Hub | Fighter | Cleric | Mage | What to watch |
 |---|---|---|---|---|
-| **Hub 1** | 1 | Seven Portals | MAP01 – MAP06 | Winnowing Hall, 3 elemental guardians, Bright Crucible secret |
-| **Hub 2** | 2 | Shadow Wood | MAP08 – MAP13 | Darkmere swamp, Caves of Circe, Wastelands, Hypostyle |
-| **Hub 3** | 3 | Heresiarch's Seminary | MAP27 – MAP34 | Dragon, Griffin, Deathwind & Wolf Chapels; Heresiarch Boss |
-| **Hub 4** | 4 | Castle of Grief | MAP21 – MAP26 | Forsaken Outpost, Gibbet, Effluvium, Dungeons |
-| **Hub 5** | 5 | Necropolis | MAP35 – MAP40 | Zedek, Menelkir, Traductus Tombs; Vivarium; Korax (Final Boss) |
-| **Deathmatch**| 0 | Secret Arena | MAP41 | Multiplayer arena map (Maze) |
+| 1 Seven Portals (MAP01-06) | [ ] | [ ] | [ ] | Seven Portals switch puzzle opening the Guardian portals; Guardian of Ice/Fire/Steel puzzles; the Bright Crucible; first weapon piece; leaving to Shadow Wood |
+| 2 Shadow Wood (MAP08-13) | [ ] | [ ] | [ ] | Swamp key, Caves of Circe, Wastelands polyobjects, Sacred Grove; Hypostyle; Death Wyvern; weapon pieces; leaving to the Seminary |
+| 3 Heresiarch's Seminary (MAP27-34) | [ ] | [ ] | [ ] | Chapel puzzles (gears, symbols); the Heresiarch fight (balls, spells, bishops); leaving to the Castle |
+| 4 Castle of Grief (MAP21-26) | [ ] | [ ] | [ ] | Gibbet, Effluvium and Dungeons doors; Desolate Garden; leaving to the Necropolis |
+| 5 Necropolis (MAP35-40) | [ ] | [ ] | [ ] | Three tombs; Vivarium; class boss fights in the Dark Crucible; Korax; the finale for that class |
 
----
-
-## 2. Playthrough Audit Matrix
-
-Audited using `tools/playthrough_audit.py` on the commercial Hexen 1.1 IWAD.
-Each test loaded map geometry, resolved polyobjects, spawned all mode/skill actors,
-executed ACS `OPEN` scripts, and ran 35 simulation tics (1 second of live simulation).
-
-| Map | Cluster | Name | Sectors | Lines | Things | Polyobjs | Fighter | Cleric | Mage | Status |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `MAP01` | 1 | Winnowing Hall | 401 | 1,769 | 346 | 12 | PASS | PASS | PASS | **PASS** |
-| `MAP02` | 1 | Seven Portals | 263 | 1,691 | 685 | 24 | PASS | PASS | PASS | **PASS** |
-| `MAP03` | 1 | Guardian of Ice | 292 | 1,543 | 387 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP04` | 1 | Guardian of Fire | 225 | 1,017 | 281 | 3 | PASS | PASS | PASS | **PASS** |
-| `MAP05` | 1 | Guardian of Steel | 382 | 1,661 | 479 | 6 | PASS | PASS | PASS | **PASS** |
-| `MAP06` | 1 | Bright Crucible | 154 | 1,229 | 378 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP08` | 2 | Darkmere | 397 | 2,154 | 588 | 2 | PASS | PASS | PASS | **PASS** |
-| `MAP09` | 2 | Caves of Circe | 287 | 1,324 | 371 | 2 | PASS | PASS | PASS | **PASS** |
-| `MAP10` | 2 | Wastelands | 337 | 2,033 | 442 | 7 | PASS | PASS | PASS | **PASS** |
-| `MAP11` | 2 | Sacred Grove | 27 | 196 | 108 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP12` | 2 | Hypostyle | 164 | 1,572 | 270 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP13` | 2 | Shadow Wood | 355 | 1,865 | 494 | 4 | PASS | PASS | PASS | **PASS** |
-| `MAP21` | 4 | Forsaken Outpost | 245 | 1,275 | 400 | 5 | PASS | PASS | PASS | **PASS** |
-| `MAP22` | 4 | Castle of Grief | 157 | 1,381 | 503 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP23` | 4 | Gibbet | 239 | 1,530 | 480 | 6 | PASS | PASS | PASS | **PASS** |
-| `MAP24` | 4 | Effluvium | 298 | 1,354 | 286 | 1 | PASS | PASS | PASS | **PASS** |
-| `MAP25` | 4 | Dungeons | 181 | 1,002 | 525 | 2 | PASS | PASS | PASS | **PASS** |
-| `MAP26` | 4 | Desolate Garden | 124 | 608 | 222 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP27` | 3 | Heresiarch's Seminary | 368 | 2,180 | 824 | 9 | PASS | PASS | PASS | **PASS** |
-| `MAP28` | 3 | Dragon Chapel | 106 | 748 | 325 | 8 | PASS | PASS | PASS | **PASS** |
-| `MAP30` | 3 | Griffin Chapel | 128 | 743 | 292 | 12 | PASS | PASS | PASS | **PASS** |
-| `MAP31` | 3 | Deathwind Chapel | 191 | 1,098 | 276 | 8 | PASS | PASS | PASS | **PASS** |
-| `MAP32` | 3 | Orchard of Lamentations| 124 | 584 | 258 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP33` | 3 | Silent Refectory | 190 | 1,025 | 284 | 3 | PASS | PASS | PASS | **PASS** |
-| `MAP34` | 3 | Wolf Chapel | 231 | 1,392 | 375 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP35` | 5 | Necropolis | 213 | 1,411 | 484 | 2 | PASS | PASS | PASS | **PASS** |
-| `MAP36` | 5 | Zedek's Tomb | 75 | 687 | 286 | 17 | PASS | PASS | PASS | **PASS** |
-| `MAP37` | 5 | Menelkir's Tomb | 116 | 611 | 245 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP38` | 5 | Traductus' Tomb | 118 | 570 | 172 | 0 | PASS | PASS | PASS | **PASS** |
-| `MAP39` | 5 | Vivarium | 66 | 573 | 352 | 3 | PASS | PASS | PASS | **PASS** |
-| `MAP40` | 5 | Dark Crucible | 181 | 937 | 480 | 2 | PASS | PASS | PASS | **PASS** |
-| `MAP41` | 0 | Maze (Deathmatch) | 150 | 829 | 9 | 0 | PASS | PASS | PASS | **PASS** |
-
----
-
-## 3. Hub Persistence & Cross-Cluster Transition Validation
-
-Tested multi-map portal round-trips and cluster transitions:
-
-1. **Hub 1 (Same Cluster)**:
-   - `MAP01` -> `MAP02` (Seven Portals opening sequence): **PASS**
-   - `MAP02` -> `MAP03` -> `MAP02` (Guardian of Ice round-trip, puzzle state preserved): **PASS**
-   - `MAP02` -> `MAP04` -> `MAP02` (Guardian of Fire round-trip, lava sector movers preserved): **PASS**
-   - `MAP02` -> `MAP05` -> `MAP02` (Guardian of Steel round-trip, steel doors preserved): **PASS**
-2. **Cluster Boundary 1 -> 2**:
-   - `MAP02` -> `MAP08` (Darkmere): Player carry-over applied, cluster puzzle keys cleared, flight power removed, core weapons/ammo/health retained: **PASS**
-3. **Hub 2 (Same Cluster)**:
-   - `MAP08` -> `MAP13` (Shadow Wood swamp traversal): **PASS**
-4. **Cluster Boundary 2 -> 3**:
-   - `MAP08` -> `MAP27` (Heresiarch's Seminary): Cluster change carry-over verified: **PASS**
-5. **Hub 3 (Same Cluster)**:
-   - `MAP27` -> `MAP28` (Dragon Chapel): Seminary state preserved: **PASS**
-6. **Cluster Boundary 3 -> 4**:
-   - `MAP28` -> `MAP21` (Forsaken Outpost): **PASS**
-7. **Hub 4 (Same Cluster)**:
-   - `MAP21` -> `MAP22` (Castle of Grief): Outpost snapshot stored: **PASS**
-8. **Cluster Boundary 4 -> 5**:
-   - `MAP21` -> `MAP35` (Necropolis): **PASS**
-9. **Hub 5 Final Boss Progression**:
-   - `MAP35` -> `MAP40` (Dark Crucible): Korax boss chamber loaded, class boss spawners and ACS script execution verified: **PASS**
-
----
-
-## 4. Class-Specific Mechanics Verification
-
-- **Fighter (Baratus)**:
-  - Punch (Fists), Timon's Axe (Mana 1), Hammer of Retribution (Mana 2 / Melee + Projectile), Quietus (Assembled 4th weapon, 5-blade wave).
-  - High natural armor absorption, fast movement speed.
-  - Verified across all maps: **PASS**.
-- **Cleric (Parias)**:
-  - Mace of Contrition, Serpent Staff (Life-drain melee + dual poison missile), Firestorm (Flame pillars), Wraithverge (Homing ghost spirits).
-  - Balanced armor, healing radius capability, invulnerability invulnerability ring.
-  - Verified across all maps: **PASS**.
-- **Mage (Daedolon)**:
-  - Wand of Sapphire, Frost Shards (Freeze cones / ice shatter), Arc of Death (Lightning zap chains), Bloodscourge (Fireball clusters).
-  - High magical damage, lower physical armor absorption.
-  - Verified across all maps: **PASS**.
-
----
-
-## 5. Conclusion & Milestone Status
-
-All 32 maps, 5 campaign hubs, and 3 character classes passed automated live-simulation
-and persistence verification with zero errors or crashes.
-**Milestone M6** is achieved.
+Also once per class: the fourth weapon assembled from its three pieces and fired; every
+artifact used at least once; death and "press use" reborn; save and load from the menu and
+with F-keys, inside a hub and after a cluster change; music changes per map; automap; the
+status bar and inventory bar; the intermission text between clusters.

@@ -35,6 +35,7 @@ from pyhexen.sim.actions import action
 from pyhexen.sim.actions.monsters_common import (
     FLOAT_BOB_OFFSETS,
     FLOOR_WATER,
+    face_movement_direction,
     get_thing_floor_type,
     hitdice,
 )
@@ -720,26 +721,26 @@ def a_minotaurroam(sim: GameSim, actor: Mobj) -> None:
         return
 
     if sim.rng.p_random() < 30:
-        a_minotaurlook(sim, actor)
-        if actor.target is not None:
-            return
+        a_minotaurlook(sim, actor)  # adjust to closest target
+
+    from pyhexen.sim.enemy import move
 
     if sim.rng.p_random() < 6:
-        master = _resolve_mobj(actor.special1)
-        if master is not None:
-            actor.movedir = point_to_angle2(actor.x, actor.y, master.x, master.y) >> 29
-    from pyhexen.sim.enemy import move, new_chase_dir
-
+        # Choose new direction
+        actor.movedir = sim.rng.p_random() % 8
+        face_movement_direction(actor)
     if not move(actor, sim):
-        new_chase_dir(actor, sim)
+        # Turn
+        if sim.rng.p_random() & 1:
+            actor.movedir = (actor.movedir + 1) % 8
+        else:
+            actor.movedir = (actor.movedir + 7) % 8
+        face_movement_direction(actor)
 
 
 @action("A_MinotaurLook")
 def a_minotaurlook(sim: GameSim, actor: Mobj) -> None:
     """Port of A_MinotaurLook (p_enemy.c:1186)."""
-    if not check_minotaur_age(sim, actor):
-        return
-
     actor.target = None
     master = _resolve_mobj(actor.special1)
 

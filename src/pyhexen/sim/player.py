@@ -751,6 +751,8 @@ def spawn_player(
     while len(sim.players) <= player_num:
         sim.players.append(Player(player_state=PlayerState.PST_REBORN))
     player = sim.players[player_num]
+    if not player.in_game:  # Not playing
+        return player
     if player.player_state == PlayerState.PST_REBORN:
         g_player_reborn(sim, player_num)
 

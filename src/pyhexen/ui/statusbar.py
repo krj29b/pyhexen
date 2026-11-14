@@ -186,6 +186,10 @@ class StatusBar:
         self.fonts: FontSet = FontSet.from_wad(wad) if fonts is None else fonts
 
         self.health_marker: int = 100
+        # Deathmatch: frags replace the health number (DrawMainBar / DrawFullScreenStuff).
+        self.deathmatch: bool = False
+        # playeringame[] bits, for the fullscreen frag total.
+        self.in_game_mask: int = 0xFF
         self.inventory: bool = False
         self.curpos: int = 0
         self.inv_ptr: int = 0
@@ -466,12 +470,13 @@ class StatusBar:
         """Draw main status bar interface (port of DrawMainBar)."""
         overlay.draw_picture(self.get_patch("STATBAR"), 38, 162)
 
-        # 1. Health digits
-        hlth = max(0, min(100, self.health_marker))
-        if hlth >= 25:
-            self.draw_i_number(overlay, hlth, 40, 176, red=False)
+        # 1. Frags in deathmatch, health digits otherwise
+        if self.deathmatch:
+            overlay.draw_picture(self.get_patch("KILLS"), 38, 162)
+            self.draw_i_number(overlay, sum(player.frags), 40, 176)
         else:
-            self.draw_i_number(overlay, hlth, 40, 176, red=True)
+            hlth = max(0, min(100, self.health_marker))
+            self.draw_i_number(overlay, hlth, 40, 176, red=hlth < 25)
 
         # 2. Ready Artifact
         if self.artifact_flash > 0:
@@ -625,6 +630,9 @@ class StatusBar:
         # Big health at bottom-left
         health_val = max(0, player.health)
         self.draw_b_number(overlay, health_val, 5, 180)
+        if self.deathmatch:
+            frags = sum(f for i, f in enumerate(player.frags) if self.in_game_mask & (1 << i))
+            self.draw_i_number(overlay, frags, 45, 185)
 
         if not self.inventory:
             # Ready artifact icon at bottom-right

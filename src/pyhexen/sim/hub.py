@@ -22,6 +22,7 @@ from pyhexen.sim.transitions import (
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
+    from pyhexen.sim.player import Player
     from pyhexen.wad.mapinfo import MapInfoTable
     from pyhexen.world.level import Level
 
@@ -136,7 +137,11 @@ class HubManager:
                 netgame=sim.netgame,
                 deathmatch=sim.deathmatch,
                 nomonsters=sim.nomonsters,
+                player_classes=sim.player_classes,
+                random_class=sim.random_class,
             )
+            dest_sim.consoleplayer = sim.consoleplayer
+            dest_sim.timer_minutes = sim.timer_minutes
         else:
             raise ValueError("Either target_sim or load_level_cb must be provided")
 
@@ -156,8 +161,11 @@ class HubManager:
             lightning=bool(dest_info is not None and dest_info.lightning),
             sky1_scroll_delta=dest_info.sky1_scroll_delta if dest_info is not None else 0,
             sky2_scroll_delta=dest_info.sky2_scroll_delta if dest_info is not None else 0,
+            timer_minutes=dest_sim.timer_minutes,
         )
-        if self.has_map(res.target_map):
+        dest_sim.reborn_position = res.position  # RebornPosition = position
+        # Deathmatch maps are always started fresh (SV_MapTeleport)
+        if not dest_sim.deathmatch and self.has_map(res.target_map):
             # RemoveAllThinkers, then unarchive. The RNG is not part of a vanilla
             # map archive, so keep the post-setup RNG state.
             remove_all_thinkers(dest_sim)
@@ -166,8 +174,13 @@ class HubManager:
             dest_sim.rng.set_state(rng_state)
 
         # Position carrying-over players at destination start spot
-        for p_idx, player in enumerate(players):
-            spawn_player_at_transition(dest_sim, player, player_num=p_idx, position=res.position)
+        if dest_sim.netgame:
+            _place_netgame_players(dest_sim, players, res.position)
+        else:
+            for p_idx, player in enumerate(players):
+                spawn_player_at_transition(
+                    dest_sim, player, player_num=p_idx, position=res.position
+                )
 
         # Redirect any mobjs whose target was player
         if dest_sim.players and dest_sim.players[0].mo is not None:
@@ -183,3 +196,59 @@ class HubManager:
         dest_sim.acs_store.run_pending_for_map(res.target_map, dest_sim)
 
         return dest_sim, res
+
+
+def _place_netgame_players(sim: GameSim, players: list[Player], position: int) -> None:
+    """The netgame part of SV_MapTeleport's player restore.
+
+    Dead players are reborn; coop players keep keys, pieces and weapons through a reborn
+    (25 of each mana, best weapon raised); deathmatch resets frags and respawns everyone
+    at a random deathmatch start. Players who left the game are kept but not spawned.
+    """
+    from pyhexen.sim.info_data import MobjType
+    from pyhexen.sim.mobj import remove_mobj, spawn_mobj
+    from pyhexen.sim.netplay import NUMWEAPONS, deathmatch_spawn_player
+    from pyhexen.sim.player import PlayerState, spawn_player
+
+    sim.players = []
+    for num, player in enumerate(players):
+        sim.players.append(player)
+        player.attacker = None
+        player.poisoner = None
+        player.message_tics = 0
+        if not player.in_game:
+            player.mo = None
+            continue
+        if player.player_state == PlayerState.PST_DEAD:
+            player.player_state = PlayerState.PST_REBORN  # force all players to be alive
+        old_keys, old_pieces = player.keys, player.pieces
+        old_weapons = list(player.weaponowned)
+        was_reborn = player.player_state == PlayerState.PST_REBORN
+        player.mo = None  # the old map's mobj stays behind
+        if sim.deathmatch:
+            player.frags = [0] * len(player.frags)
+            start = sim.player_starts.get((num, 0))
+            temp = spawn_mobj(
+                sim,
+                (start.x << 16) if start else 0,
+                (start.y << 16) if start else 0,
+                0,
+                MobjType.MT_PLAYER_FIGHTER,
+            )
+            player.mo = temp
+            deathmatch_spawn_player(sim, num)
+            remove_mobj(sim, temp)
+        else:
+            spawn_player(sim, num, position)
+        if was_reborn and not sim.deathmatch:
+            player.keys = old_keys
+            player.pieces = old_pieces
+            best = 0
+            for i in range(NUMWEAPONS):
+                if old_weapons[i]:
+                    best = i
+                    player.weaponowned[i] = True
+            player.mana[0] = 25
+            player.mana[1] = 25
+            if best:
+                player.pendingweapon = best

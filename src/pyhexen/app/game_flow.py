@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyhexen.app.savegame import SaveError
 from pyhexen.core.events import MapExit
+from pyhexen.core.ticcmd import BT_ATTACK, BT_USE
 from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.hub import HubManager, remove_all_thinkers
 from pyhexen.sim.message import set_message
@@ -133,6 +134,14 @@ class GameFlow:
         self._save_slot: int = 0
         self._save_description: str = ""
         self._load_slot: int = 0
+        # Netgame settings (S2c); a single-player game leaves them at their defaults.
+        self.netgame: bool = False
+        self.deathmatch: bool = False
+        self.player_classes: list[int] = []
+        self.random_class: bool = False
+        self.timer_minutes: int = 0
+        self.consoleplayer: int = 0
+        self._tried_to_skip: bool = False
         # Set when the last load failed (bad file, other IWAD...), for the UI to report.
         self.last_load_error: str = ""
 
@@ -142,10 +151,10 @@ class GameFlow:
 
     @property
     def player(self) -> Player | None:
-        """The console player (player 0), or None outside a level."""
-        if self.sim is None or not self.sim.players:
+        """The console player, or None outside a level."""
+        if self.sim is None or self.consoleplayer >= len(self.sim.players):
             return None
-        return self.sim.players[0]
+        return self.sim.players[self.consoleplayer]
 
     @property
     def pending_action(self) -> GameAction:
@@ -214,6 +223,29 @@ class GameFlow:
         self._start_new_init()
         self._load_new_level(map_num)
 
+    def start_netgame(
+        self,
+        *,
+        map_num: int,
+        skill: int,
+        player_classes: list[int],
+        consoleplayer: int,
+        deathmatch: bool = False,
+        timer_minutes: int = 0,
+        random_class: bool = False,
+    ) -> None:
+        """Start a netgame on `map_num` with every node's settings (G_InitNew, netgame)."""
+        self.netgame = True
+        self.deathmatch = deathmatch
+        self.player_classes = list(player_classes)
+        self.random_class = random_class
+        self.timer_minutes = timer_minutes
+        self.consoleplayer = consoleplayer
+        self.player_class = player_classes[consoleplayer] if player_classes else 0
+        self.skill = skill
+        self._start_new_init()
+        self._load_new_level(map_num)
+
     def save_game(self, slot: int, description: str) -> None:
         """Save into `slot` on the next tic (G_SaveGame; sendsave becomes ga_savegame)."""
         self._save_slot = slot
@@ -245,7 +277,8 @@ class GameFlow:
         Port of G_Ticker (g_game.c): reborns first, then deferred game actions,
         then the ticker for the current state.
         """
-        if self.state == GameState.LEVEL and self.sim is not None:
+        if self.state == GameState.LEVEL and self.sim is not None and not self.netgame:
+            # Netgame reborns happen inside the sim (G_DoReborn's netgame branch).
             for player in self.sim.players:
                 if player.player_state == PlayerState.PST_REBORN:
                     self._do_reborn()
@@ -264,6 +297,8 @@ class GameFlow:
                 if isinstance(event, MapExit):
                     self._completed(event.next_map, event.position)
         elif self.state == GameState.INTERMISSION:
+            if self.netgame:
+                self._check_for_skip(cmds)
             self.intermission.tick()
         elif self.state == GameState.FINALE:
             self.finale.tick()
@@ -275,6 +310,42 @@ class GameFlow:
             else:
                 self.title.tick()
         return events
+
+    def _check_for_skip(self, cmds: Sequence[Any]) -> None:
+        """Port of CheckForSkip (in_lude.c): any player pressing fire or use skips.
+
+        In a netgame the intermission runs from the same ticcmds on every node, so the
+        skip comes from them rather than from a local key.
+        """
+        if self.sim is None:
+            return
+        skip = False
+        for num, player in enumerate(self.sim.players):
+            if not player.in_game:
+                continue
+            buttons = cmds[num].buttons if num < len(cmds) else 0
+            if buttons & BT_ATTACK:
+                if not player.attackdown:
+                    skip = True
+                player.attackdown = True
+            else:
+                player.attackdown = False
+            if buttons & BT_USE:
+                if not player.usedown:
+                    skip = True
+                player.usedown = True
+            else:
+                player.usedown = False
+        inter = self.intermission
+        if self.deathmatch and inter.intertime < 140:  # wait 4 seconds before a skip
+            if skip:
+                self._tried_to_skip = True
+                skip = False
+        elif self._tried_to_skip:
+            skip = True
+            self._tried_to_skip = False
+        if skip:
+            inter.skip_intermission = True
 
     def _run_action(self, action: GameAction) -> None:
         if action == GameAction.NEW_GAME:
@@ -312,14 +383,25 @@ class GameFlow:
     def _load_new_level(self, map_num: int) -> None:
         """Port of G_InitNew + G_DoLoadLevel for a fresh game."""
         level = self._load_level_fn(self.map_lump(map_num))
-        sim = GameSim(level=level, skill=self.skill, player_class=self.player_class)
+        sim = GameSim(
+            level=level,
+            skill=self.skill,
+            player_class=self.player_class,
+            netgame=self.netgame,
+            deathmatch=self.deathmatch,
+            player_classes=self.player_classes or None,
+            random_class=self.random_class,
+        )
         sim.map_num = map_num
         sim.cluster = self.map_cluster(map_num)
+        sim.consoleplayer = self.consoleplayer
         self.hub.current_cluster = sim.cluster
         sim.surface_animator = self.surface_animator
+        players = range(len(self.player_classes)) if self.netgame else (0,)
         sim.setup_level(
-            player_nums=(0,),
+            player_nums=players,
             lightning=self.map_lightning(map_num),
+            timer_minutes=self.timer_minutes,
             **self.map_sky_scroll(map_num),
         )
         self._enter_level(sim)
@@ -468,6 +550,10 @@ class GameFlow:
         sim = self.sim
         if self.saves is None or self.state != GameState.LEVEL or sim is None:
             return  # vanilla only offers saving inside a level
+        if self.netgame:
+            if self.player is not None:
+                set_message(sim, self.player, "CAN'T SAVE IN A NETGAME", True)
+            return  # ADR-013: no saving in a netgame
         if sim.acs_vm is not None and sim.acs_vm.world_vars:
             self.hub.world_vars = list(sim.acs_vm.world_vars)
         self.saves.save_game(self._save_slot, self._save_description, sim, self.hub)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pygame
 
@@ -21,6 +21,7 @@ from pyhexen.app.game_flow import GameFlow, GameState
 from pyhexen.app.game_ui import GameUI
 from pyhexen.app.input import InputHandler
 from pyhexen.app.main_loop import FixedTimestepAccumulator
+from pyhexen.app.netgame import NetGameDriver, iwad_md5, parse_address
 from pyhexen.audio.game_audio import GameAudio
 from pyhexen.core.ticcmd import TicCmd
 from pyhexen.render.camera import Camera
@@ -97,6 +98,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Play back a demo as fast as possible to benchmark and verify determinism",
+    )
+    net = parser.add_argument_group("netgame (ADR-013)")
+    net.add_argument(
+        "--host",
+        type=int,
+        nargs="?",
+        const=2342,
+        default=None,
+        metavar="PORT",
+        help="Host a netgame on a UDP port (default 2342); the host also plays",
+    )
+    net.add_argument("--join", type=str, default=None, metavar="HOST[:PORT]", help="Join a netgame")
+    net.add_argument("--name", type=str, default=None, help="Player name in a netgame")
+    net.add_argument(
+        "--players", type=int, default=0, help="Host: start as soon as this many have joined"
+    )
+    net.add_argument("--deathmatch", action="store_true", help="Host: deathmatch instead of coop")
+    net.add_argument("--timer", type=int, default=0, help="Host: deathmatch map time in minutes")
+    net.add_argument(
+        "--randclass", action="store_true", help="Host: random class at every deathmatch spawn"
     )
     return parser
 
@@ -237,6 +258,7 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         # Passing the sim's event bus lets the renderer rebuild moving sectors.
         renderer.load_map(stack, sim.level, info, event_bus=sim.events)
         update_camera(snap=True)
+        statusbar.deathmatch = sim.deathmatch
         if game_ui is not None:
             game_ui.on_level_loaded(sim, info)
         if audio is not None:
@@ -250,7 +272,33 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
 
     flow.on_level_loaded = on_level_loaded
 
-    if demo_player is not None:
+    net: NetGameDriver | None = None
+    if args.host is not None or args.join:
+        md5 = iwad_md5(iwad_path)
+        if args.host is not None:
+            start_map = warp_map or map_table.translate_warp(1)
+            net = NetGameDriver.host(
+                flow,
+                md5,
+                port=args.host,
+                name=args.name or "HOST",
+                player_class=pclass_idx,
+                start_players=args.players,
+                map_num=start_map if start_map > 0 else 1,
+                skill=skill,
+                deathmatch=args.deathmatch,
+                timer_minutes=args.timer,
+                random_class=args.randclass,
+            )
+        else:
+            net = NetGameDriver.join(
+                flow,
+                md5,
+                parse_address(args.join),
+                name=args.name or "PLAYER",
+                player_class=pclass_idx,
+            )
+    elif demo_player is not None:
         flow.demo_playback = True
         demo_sim = build_demo_sim(stack, map_table, demo_player.demo)
         flow.surface_animator = demo_sim.surface_animator
@@ -259,6 +307,9 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         flow.init_new(warp_map, pclass_idx, skill)
     else:
         flow.start_title()
+    if net is not None:
+        flow.state = GameState.TITLE  # the lobby is shown until the host starts
+        flow.title.active = False
 
     if is_headless:
         for _ in range(args.headless_frames):
@@ -345,6 +396,21 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif net is not None and (not net.started or net.failed):
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        net.host_start()
+            elif net is not None and flow.state == GameState.INTERMISSION and not menu_open():
+                # Netgame intermissions skip on a player's fire/use ticcmd (CheckForSkip).
+                if event.type in (
+                    pygame.KEYDOWN,
+                    pygame.KEYUP,
+                    pygame.MOUSEBUTTONDOWN,
+                    pygame.MOUSEBUTTONUP,
+                ):
+                    input_handler.process_event(event)
             elif event.type == pygame.KEYDOWN:
                 if menu_open():
                     menu_mgr.handle_key(event.key, event.unicode)
@@ -409,8 +475,46 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         if menu_open():
             menu_mgr.tick()
 
+        def after_tic(events: list[Any], cmds: list[TicCmd]) -> None:
+            if audio is not None:
+                audio.handle_events(events)
+                listener = flow.player.mo if in_level() and flow.player else None
+                audio.tick(listener)
+                audio.set_volumes(config.audio.sfx_volume, config.audio.music_volume)
+            ui.tick()
+            if flow.sim is not None:
+                statusbar.in_game_mask = sum(
+                    1 << i for i, p in enumerate(flow.sim.players) if p.in_game
+                )
+            if in_level():
+                tic_player = flow.player
+                assert tic_player is not None
+                ui.mark_seen()
+                statusbar.tick(tic_player)
+                if not args.fly:
+                    update_camera()
+
+        if net is not None:
+            # A netgame never pauses: every node runs the tics the server sends.
+            due = accumulator.advance(dt)
+            net.pump()
+
+            def make_cmd() -> TicCmd:
+                nonlocal suicide_pending
+                if menu_open():
+                    return TicCmd()
+                me = flow.player
+                cmd = input_handler.build_ticcmd(
+                    player_class=me.player_class if me is not None else flow.player_class,
+                    suicide=suicide_pending,
+                )
+                suicide_pending = False
+                return cmd
+
+            for events in net.tick(due, make_cmd):
+                after_tic(events or [], [])
         # The menu pauses a single-player level (MN_ActivateMenu); other screens keep running.
-        if not (menu_open() and flow.state == GameState.LEVEL):
+        elif not (menu_open() and flow.state == GameState.LEVEL):
             if args.fly and in_level():
                 keys = pygame.key.get_pressed()
                 forward = float(keys[pygame.K_w] or keys[pygame.K_UP]) - float(
@@ -450,22 +554,9 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
 
                 was_level = flow.state == GameState.LEVEL
                 events = flow.tick(cmds)
-                if audio is not None:
-                    audio.handle_events(events)
-                    listener = flow.player.mo if in_level() and flow.player else None
-                    audio.tick(listener)
-                    audio.set_volumes(config.audio.sfx_volume, config.audio.music_volume)
                 if was_level and demo_recorder is not None and demo_player is None:
                     demo_recorder.record_tic(cmds)
-
-                ui.tick()
-                if in_level():
-                    player = flow.player
-                    assert player is not None
-                    ui.mark_seen()
-                    statusbar.tick(player)
-                    if not args.fly:
-                        update_camera()
+                after_tic(events, cmds)
 
         player = flow.player
         palette = 0
@@ -486,7 +577,9 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
                 palette = get_sb_palette(player)
         else:
             ctx.clear(0.0, 0.0, 0.0, 1.0)
-            if flow.state == GameState.TITLE:
+            if net is not None and (not net.started or net.failed):
+                net.draw_lobby(overlay)
+            elif flow.state == GameState.TITLE:
                 flow.title.draw(overlay)
             elif flow.state == GameState.INTERMISSION:
                 flow.intermission.draw(overlay)
@@ -497,6 +590,9 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
         if not args.fly or menu_open() or not in_level():
             overlay_box = overlay.render(ctx.ctx, renderer.tex_mgr, palette_index=palette)
         ctx.swap_buffers()
+
+    if net is not None:
+        net.close()
 
     if demo_recorder is not None:
         saved_demo = demo_recorder.finish()

@@ -217,7 +217,11 @@ class GameUI:
         if not self.automap.active or sim is None or sim.level is None or player is None:
             return
         actors = _mobjs(sim) if self.automap.cheating == 2 else None
-        self.automap.draw(overlay, sim.level, player, actors, map_name=self.map_name)
+        self.automap.netgame = sim.netgame
+        self.automap.deathmatch = sim.deathmatch
+        self.automap.draw(
+            overlay, sim.level, player, actors, map_name=self.map_name, players=sim.players
+        )
 
     def draw_message(self, overlay: Overlay2D, player: Player) -> None:
         """DrawMessage: after the view and the status bar."""

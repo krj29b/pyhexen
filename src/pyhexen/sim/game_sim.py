@@ -62,6 +62,8 @@ class GameSim:
         self.random_class: bool = random_class
         # RebornPosition: the start group coop players respawn at (the map entry position).
         self.reborn_position: int = 0
+        # -timer, in minutes: every deathmatch map exits after this long (0: never).
+        self.timer_minutes: int = 0
         # consoleplayer: whose view, messages and sounds this node shows. UI only; it
         # never changes sim state, so every node of a netgame stays in sync.
         self.consoleplayer: int = 0
@@ -153,10 +155,12 @@ class GameSim:
             self.acs_vm.start_open_scripts(self)
         # If deathmatch, randomly spawn the active players (P_SetupLevel)
         self.timer_game = 0
-        if self.deathmatch and player_nums:
-            spawn_deathmatch_players(self)
+        if self.deathmatch:
+            if player_nums:  # map changes place their players themselves (SV_MapTeleport)
+                spawn_deathmatch_players(self)
             if timer_minutes:
                 self.timer_game = timer_minutes * 35 * 60
+        self.timer_minutes = timer_minutes
         p_spawn_specials(self)
         # P_InitLightning comes last in P_SetupLevel; `lightning` is the MAPINFO flag.
         self.surface_animator.init_lightning(self, enabled=lightning)

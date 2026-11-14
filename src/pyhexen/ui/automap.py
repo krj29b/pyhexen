@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 # Palette colors from am_map.h
 PARCH: int = 103
 WHITE: int = 32
+# AM_PLR1_COLOR .. AM_PLR8_COLOR (am_map.h): blue, red, yellow, green, jade, white, hazel, purple
+PLAYER_COLORS: tuple[int, ...] = (157, 177, 137, 198, 215, 32, 106, 234)
 WALLCOLORS: int = 96  # Red 1-sided walls
 TSWALLCOLORS: int = 40  # Grey 2-sided lines with no height change (cheat)
 FDWALLCOLORS: int = 112  # Brown floor height change
@@ -197,6 +199,9 @@ class AutoMap:
         self.follow_player: bool = True
         self.grid: bool = False
         self.cheating: int = 0  # 0: normal, 1: all lines, 2: all lines + actors
+        # Netgames draw every player in its colour (deathmatch: only yourself).
+        self.netgame: bool = False
+        self.deathmatch: bool = False
 
         # Window & viewport dimensions
         self.f_w: int = FINIT_WIDTH
@@ -509,6 +514,7 @@ class AutoMap:
         player: Player,
         actors: list[Mobj] | None = None,
         map_name: str | None = None,
+        players: list[Player] | None = None,
     ) -> None:
         """Render the automap onto the 320x200 overlay canvas (AM_Drawer).
 
@@ -528,8 +534,16 @@ class AutoMap:
         # 3. Geometry walls
         self._draw_walls(overlay, level, player)
 
-        # 4. Player indicator
-        self._draw_player(overlay, player)
+        # 4. Player indicators (AM_drawPlayers)
+        if not self.netgame or players is None:
+            self._draw_player(overlay, player)
+        else:
+            for num, other in enumerate(players):
+                if self.deathmatch and other is not player:
+                    continue
+                if other.in_game:
+                    color = PLAYER_COLORS[num % len(PLAYER_COLORS)]
+                    self._draw_player(overlay, other, color)
 
         # 5. Actors / monsters (cheating == 2)
         if self.cheating == 2 and actors is not None:
@@ -666,8 +680,8 @@ class AutoMap:
 
         return None
 
-    def _draw_player(self, overlay: Overlay2D, player: Player) -> None:
-        """Draw player directional arrow (AM_drawPlayers)."""
+    def _draw_player(self, overlay: Overlay2D, player: Player, color: int = WHITE) -> None:
+        """Draw player directional arrow (AM_drawLineCharacter in AM_drawPlayers)."""
         if player.mo is None:
             return
 
@@ -691,7 +705,7 @@ class AutoMap:
                     clipped[1],
                     clipped[2],
                     clipped[3],
-                    WHITE,
+                    color,
                 )
 
     def _draw_things(self, overlay: Overlay2D, actors: list[Mobj]) -> None:

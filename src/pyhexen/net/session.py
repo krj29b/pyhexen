@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
+from pyhexen.core.ticcmd import TicCmd
 from pyhexen.net.client import NetClient
 from pyhexen.net.protocol import GameSettings
 from pyhexen.sim.demo_trace import trace_tic
@@ -44,28 +46,56 @@ def build_netgame_sim(level: Level, settings: GameSettings, player_num: int) -> 
 
 
 class LockstepRunner:
-    """Feeds complete tics from `client` to `sim`."""
+    """Feeds complete tics from `client` to a game.
+
+    The game is a bare `GameSim`, or anything with a tick function and a current sim
+    (the app's GameFlow, whose sim changes on every map change): see `for_game`.
+    """
 
     def __init__(self, client: NetClient, sim: GameSim) -> None:
         self.client = client
-        self.sim = sim
+        self._tick: Callable[[list[TicCmd]], Any] = sim.tick
+        self._current: Callable[[], GameSim | None] = lambda: sim
         self.in_game = (1 << len(sim.players)) - 1
 
-    def run_ready(self, max_tics: int | None = None) -> int:
-        """Run every tic that has arrived (at most `max_tics`); return how many ran."""
-        ran = 0
-        while max_tics is None or ran < max_tics:
+    @classmethod
+    def for_game(
+        cls,
+        client: NetClient,
+        tick: Callable[[list[TicCmd]], Any],
+        current_sim: Callable[[], GameSim | None],
+        num_players: int,
+    ) -> LockstepRunner:
+        runner = cls.__new__(cls)
+        runner.client = client
+        runner._tick = tick
+        runner._current = current_sim
+        runner.in_game = (1 << num_players) - 1
+        return runner
+
+    @property
+    def sim(self) -> GameSim:
+        sim = self._current()
+        assert sim is not None
+        return sim
+
+    def run_ready(self, max_tics: int | None = None) -> list[Any]:
+        """Run every tic that has arrived (at most `max_tics`); return what each tick returned."""
+        results: list[Any] = []
+        while max_tics is None or len(results) < max_tics:
             tic = self.client.take_tic()
             if tic is None:
                 break
             number = self.client.run_tic - 1
             gone = self.in_game & ~tic.in_game
-            for num in range(len(self.sim.players)):
-                if gone & (1 << num):
-                    player_quit(self.sim, num)  # PlayerQuitGame, before the tic runs
+            sim = self._current()
+            if gone and sim is not None:
+                for num in range(len(sim.players)):
+                    if gone & (1 << num):
+                        player_quit(sim, num)  # PlayerQuitGame, before the tic runs
             self.in_game = tic.in_game
-            self.sim.tick(tic.cmds)
+            results.append(self._tick(tic.cmds))
             if (number + 1) % HASH_INTERVAL == 0:
-                self.client.report_hash(number, sim_hash(self.sim))
-            ran += 1
-        return ran
+                sim = self._current()
+                self.client.report_hash(number, sim_hash(sim) if sim is not None else 0)
+        return results

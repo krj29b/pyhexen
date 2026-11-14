@@ -119,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
     net.add_argument(
         "--randclass", action="store_true", help="Host: random class at every deathmatch spawn"
     )
+    net.add_argument(
+        "--net-bot",
+        action="store_true",
+        help="Headless netgame: play with the scripted bot instead of idle input",
+    )
     return parser
 
 
@@ -164,6 +169,57 @@ def describe_view(sim: GameSim | None, player: Player | None) -> str:
         f"floor={sector.floor_height / 65536:.0f} ceiling={sector.ceiling_height / 65536:.0f} "
         f"tic={sim.level_time}"
     )
+
+
+def _run_headless_netgame(net: NetGameDriver, flow: GameFlow, tics: int, *, bot: bool) -> int:
+    """Play `tics` tics of a netgame without a window (S2d end-to-end runs).
+
+    Prints one `NETGAME ...` line with this node's state hash at that tic; the exit code
+    is 0 when the tic was reached with no desync.
+    """
+    import time
+
+    from pyhexen.net.session import sim_hash
+    from pyhexen.tools.playthrough import Bot
+
+    player_bot: Bot | None = None
+
+    def make_cmd() -> TicCmd:
+        if player_bot is None:
+            return TicCmd()
+        return player_bot.cmd(flow)
+
+    deadline = time.monotonic() + 60 + tics / 35 * 4
+    while time.monotonic() < deadline and not net.failed:
+        net.pump()
+        if net.started:
+            if bot and player_bot is None:
+                player_bot = Bot(seed=net.client.player_num + 1)
+            net.tick(1, make_cmd, max_tics=max(0, tics - net.client.run_tic))
+            if net.client.run_tic >= tics:
+                break
+        time.sleep(0.0005)
+    # Keep the connection up so the others get their last tics (the host serves them).
+    linger = time.monotonic() + 5.0
+    while time.monotonic() < linger and not net.failed:
+        net.pump()
+        if net.started:
+            net.tick(1, make_cmd, max_tics=0)
+        if net.peers_have(tics - 1) and (net.is_host or time.monotonic() > linger - 4.0):
+            break
+        time.sleep(0.001)
+    sim = flow.sim
+    digest = sim_hash(sim) if sim is not None else 0
+    print(
+        f"NETGAME player={net.client.player_num} tic={net.client.run_tic} "
+        f"map={sim.map_num if sim is not None else 0} hash={digest:08x} "
+        f"desync={net.client.desync_tic} state={net.client.state.value}",
+        flush=True,
+    )
+    # A host leaving after this node reached the tic is the normal end, not a failure.
+    ok = net.client.run_tic >= tics and net.client.desync_tic < 0
+    net.close()
+    return 0 if ok else 1
 
 
 def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
@@ -310,6 +366,11 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     if net is not None:
         flow.state = GameState.TITLE  # the lobby is shown until the host starts
         flow.title.active = False
+
+    if is_headless and net is not None:
+        code = _run_headless_netgame(net, flow, args.headless_frames, bot=args.net_bot)
+        ctx.close()
+        return code
 
     if is_headless:
         for _ in range(args.headless_frames):

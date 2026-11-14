@@ -165,14 +165,16 @@ class NetGameDriver:
                 self.client, self.flow.tick, lambda: self.flow.sim, st.num_players
             )
 
-    def tick(self, due: int, make_cmd: Callable[[], TicCmd]) -> list[Any]:
-        """Send `due` local ticcmds and run every tic that is complete."""
+    def tick(
+        self, due: int, make_cmd: Callable[[], TicCmd], max_tics: int | None = None
+    ) -> list[Any]:
+        """Send `due` local ticcmds and run the complete tics (at most `max_tics`)."""
         if self.runner is None:
             return []
         for _ in range(due):
             if self.client.can_make_cmd():
                 self.client.make_cmd(make_cmd())
-        results = self.runner.run_ready()
+        results = self.runner.run_ready(max_tics)
         self._report_desync()
         return results
 
@@ -185,6 +187,12 @@ class NetGameDriver:
         player = self.flow.player
         if self.flow.sim is not None and player is not None:
             set_message(self.flow.sim, player, f"DESYNC AT TIC {self.client.desync_tic}", True)
+
+    def peers_have(self, tic: int) -> bool:
+        """Host: every player still in the game has received tics up to `tic`."""
+        if self.server is None:
+            return True
+        return all(p.tic_ack >= tic for p in self.server.peers if p.in_game)
 
     def close(self) -> None:
         if self.client.state == ClientState.GAME:

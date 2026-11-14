@@ -126,3 +126,17 @@ Also once per class: the fourth weapon assembled from its three pieces and fired
 artifact used at least once; death and "press use" reborn; save and load from the menu and
 with F-keys, inside a hub and after a cluster change; music changes per map; automap; the
 status bar and inventory bar; the intermission text between clusters.
+
+### Multiplayer (S2d, needs two or more computers)
+
+The netgame was checked with 2-4 processes on one machine (`tests/render/test_net_processes.py`,
+`tests/wad/test_netgame_iwad.py`, and 5-minute 4-player coop and deathmatch runs with no
+desync). Still to check by hand on a real LAN or over the internet:
+
+- [ ] Host and join from two computers (`--host` / `--join`), lobby shows both, Enter starts
+- [ ] Coop: both players see each other move, open doors, kill monsters; exit to the next map together
+- [ ] Coop: one player dies and respawns at a start with weapons and keys kept
+- [ ] Deathmatch with `--timer 2`: frags on the status bar, frag table at the intermission, next map
+- [ ] One player quits mid-game: "PLAYER n LEFT THE GAME", the others go on
+- [ ] Wrong IWAD on the joiner: refused with a message
+- [ ] No `DESYNC AT TIC` message during a long game

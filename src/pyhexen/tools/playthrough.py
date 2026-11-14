@@ -655,12 +655,17 @@ class Bot:
     def cmd(self, flow: GameFlow) -> TicCmd:
         self.tic += 1
         sim = flow.sim
+        if flow.state == GameState.INTERMISSION:
+            # A netgame intermission ends on a fire/use press (CheckForSkip needs the edge).
+            return TicCmd(buttons=BT_USE if self.tic % 4 == 0 else 0)
         if sim is None or flow.state != GameState.LEVEL:
             return TicCmd()
-        player = sim.players[0]
-        mo = player.mo
-        if mo is None:
+        player = flow.player
+        mo = player.mo if player is not None else None
+        if player is None or mo is None:
             return TicCmd()
+        if player.player_state == PlayerState.PST_DEAD:
+            return TicCmd(buttons=BT_USE if self.tic % 4 == 0 else 0)  # respawn
         cmd = TicCmd(forwardmove=WALK_SPEED)
         if self.tic % 4 == 0:
             self.target = _visible_monster(sim, mo)

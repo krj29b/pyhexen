@@ -20,6 +20,7 @@ The game logic is a faithful port of the GPL-released source, running as a deter
 - [Getting the game data](#getting-the-game-data)
 - [Running](#running)
 - [Controls](#controls)
+- [Multiplayer](#multiplayer)
 - [Configuration](#configuration)
 - [Demos and determinism](#demos-and-determinism)
 - [Tools](#tools)
@@ -42,11 +43,10 @@ Verification work in progress:
 
 | Area | State |
 |---|---|
-| Simulation (monsters, weapons, specials, ACS, polyobjects, hubs) | All 226 action functions ported; being checked against the reference tic by tic |
-| Vanilla demo sync (DEMO1–3) | Measured against Chocolate Hexen: in sync for 419 / 2 / 170 tics so far (see [Demos](#demos-and-determinism)) |
-| Line specials | 35 of vanilla's 81 do nothing yet, including stairs, some crushers and plats, and Thing_Spawn (task T15.8) |
-| Full playthrough per class (Milestone M6) | Not yet done (task T15.7) |
-| Animated textures, sky scrolling, lightning on screen | Simulated, but the renderer doesn't show them yet (task T15.6d) |
+| Simulation (monsters, weapons, specials, ACS, polyobjects, hubs) | All 226 action functions and all 81 line specials ported; checked against the reference tic by tic |
+| Vanilla demo sync (DEMO1–3) | In sync with Chocolate Hexen for every tic of all three demos (see [Demos](#demos-and-determinism)) |
+| Full playthrough per class (Milestone M6) | Scripted checklist passes on every map (`docs/PLAYTHROUGH.md`); the manual hub-by-hub playthrough is still to do (task T15.7b) |
+| Multiplayer | Coop and deathmatch for up to 4 players over UDP (see [Multiplayer](#multiplayer)); checked with real processes on one machine, not yet over a real LAN |
 
 The live task list, with notes from every session, is in
 [docs/PROGRESS.md](docs/PROGRESS.md).
@@ -214,6 +214,38 @@ These are the defaults. Mouse sensitivity and inversion are set in `config.toml`
 **Free-fly mode (`--fly`)**: `W A S D` or the arrow keys to move, `E`/`Space` up,
 `C`/`Ctrl` down, `Shift` faster.
 
+## Multiplayer
+
+Coop and deathmatch for 2 to 4 players. One player hosts and also plays; the others join.
+Everyone needs the same IWAD (the host checks its MD5). The game is lockstep (every
+computer runs the same simulation from everyone's input), so only the host needs an open
+UDP port, and a slow connection slows the game for everyone, as in the original.
+
+```powershell
+# host (UDP port 2342 by default); the game starts when you press Enter in the lobby,
+# or as soon as --players have joined
+uv run python -m pyhexen --iwad HEXEN.WAD --host --class cleric --name Parias
+uv run python -m pyhexen --iwad HEXEN.WAD --host 2342 --players 3 --deathmatch --timer 10 --warp 1
+
+# join
+uv run python -m pyhexen --iwad HEXEN.WAD --join 192.168.1.20 --class mage --name Daedolon
+uv run python -m pyhexen --iwad HEXEN.WAD --join example.org:2342
+```
+
+| Option | Meaning |
+|---|---|
+| `--host [PORT]` | Host a game (and play in it) |
+| `--join HOST[:PORT]` | Join a game |
+| `--name NAME` | Your name in the lobby |
+| `--players N` | Host: start as soon as N players have joined |
+| `--deathmatch`, `--timer MINUTES`, `--randclass` | Host: deathmatch, map time limit, random class at every spawn |
+| `--warp MAP`, `--skill N` | Host: the starting map and skill |
+
+On a firewall or router, allow or forward UDP port 2342 (or your `--host` port) to the
+host. Netgames can't be saved or paused. If two computers ever disagree, the game reports
+`DESYNC AT TIC n`; please report it with the tic number. Headless test runs: add
+`--headless-frames N --net-bot` to each command (see `tests/fixtures/netsession.py`).
+
 ## Configuration
 
 Copy `config.example.toml` to `config.toml` (gitignored) and edit it:
@@ -365,8 +397,9 @@ src/pyhexen/
 ├── render/          OpenGL renderer, shaders, sprites, sky, automap line visibility
 ├── audio/           sound channels, sound sequences, MUS-to-MIDI and music
 ├── ui/              menus, status bar, automap, intermission, finale, fonts, messages
-├── app/             game flow controller, input, config, save games, crash log
-└── tools/           wadinfo, mapview2d, demo_sync
+├── net/             multiplayer: lockstep protocol, UDP/loopback transports, server, client
+├── app/             game flow controller, netgame driver, input, config, save games, crash log
+└── tools/           wadinfo, mapview2d, demo_sync, playthrough
 tests/               unit, render, e2e and IWAD tests, plus the synthetic WAD builder
 tools/               dev scripts, the reference fetcher and the demo trace harness
 docs/                plan, progress log, decisions, audit and playthrough notes

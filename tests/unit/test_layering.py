@@ -4,7 +4,7 @@
 
 """Layering rules from AGENTS.md / the plan §3, enforced on the source tree (T15.5).
 
-`sim` (and the layers below it) must never import `render`, `audio`, `ui` or `app`,
+`sim` (and the layers below it) must never import `render`, `audio`, `ui`, `app` or `net`,
 not even under `TYPE_CHECKING` or inside a function.
 """
 
@@ -18,7 +18,7 @@ import pytest
 import pyhexen
 
 SRC = Path(pyhexen.__file__).parent
-FORBIDDEN = ("pyhexen.render", "pyhexen.audio", "pyhexen.ui", "pyhexen.app")
+FORBIDDEN = ("pyhexen.render", "pyhexen.audio", "pyhexen.ui", "pyhexen.app", "pyhexen.net")
 LOWER_LAYERS = ("sim", "world", "wad", "core")
 
 

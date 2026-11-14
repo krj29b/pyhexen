@@ -660,7 +660,7 @@ def kill_mobj(sim: GameSim, source: Mobj | None, target: Mobj) -> None:
     target.flags |= MobjFlag.MF_CORPSE | MobjFlag.MF_DROPOFF
     target.flags2 &= ~MobjFlag2.MF2_PASSMOBJ
     target.height >>= 2
-    target.target = None
+    # Vanilla keeps target->target: a dying bishop's A_Explode uses it as the source.
 
     # Initiate monster death actions / specials
     if (
@@ -788,8 +788,9 @@ def kill_mobj(sim: GameSim, source: Mobj | None, target: Mobj) -> None:
         else:
             set_mobj_state(sim, target, target.info.deathstate)
 
-    if not target.removed:
-        target.tics -= sim.rng.p_random() & 3
+    # Unconditional in vanilla: a death action that removed the thing (A_SoAExplode)
+    # only unlinks it, so the P_Random call still happens.
+    target.tics -= sim.rng.p_random() & 3
 
 
 # C-style function name aliases for cross-referencing Chocolate Doom reference

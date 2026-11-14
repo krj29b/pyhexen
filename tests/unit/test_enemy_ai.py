@@ -974,7 +974,7 @@ def test_new_chase_dir_turnaround_suppressed_if_alternatives_exist() -> None:
 
 
 def test_a_chase_target_killed_resets_to_spawnstate() -> None:
-    """When target dies or loses MF_SHOOTABLE, A_Chase reverts to spawnstate."""
+    """When the target loses MF_SHOOTABLE, A_Chase reverts to spawnstate (target kept)."""
     sim = _make_two_room_sim()
     player = _spawn_player(sim, 200 * FRACUNIT, 128 * FRACUNIT)
     ettin = spawn_mobj(sim, 100 * FRACUNIT, 128 * FRACUNIT, 0, MobjType.MT_ETTIN)
@@ -985,7 +985,7 @@ def test_a_chase_target_killed_resets_to_spawnstate() -> None:
 
     a_chase(sim, ettin)
     assert ettin.state_num == ettin.info.spawnstate
-    assert ettin.target is None
+    assert ettin.target is player
 
 
 def test_a_chase_justattacked_flag_suppresses_immediate_reattack() -> None:

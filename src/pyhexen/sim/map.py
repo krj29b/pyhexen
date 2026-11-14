@@ -777,7 +777,7 @@ def _ptr_slide_traverse(sim: GameSim, in_: Intercept) -> bool:
     li = in_.line
     assert li is not None
 
-    if not (li.flags & ML_TWOSIDED) or li.back_sector is None:
+    if not (li.flags & ML_TWOSIDED):
         if point_on_line_side(slide_mo.x, slide_mo.y, li) != 0:
             return True  # Don't hit the back side
     else:
@@ -881,7 +881,8 @@ def slide_move(sim: GameSim, mo: Mobj) -> None:
     st = sim.map_state
     st.slide_mo = mo
 
-    for _hitcount in range(3):
+    # Vanilla: `if (++hitcount == 3) goto stairstep`, so at most two slide attempts.
+    for _hitcount in range(2):
         if mo.momx > 0:
             leadx = mo.x + mo.radius
             trailx = mo.x - mo.radius
@@ -961,7 +962,7 @@ def slide_move(sim: GameSim, mo: Mobj) -> None:
         if try_move(sim, mo, mo.x + st.tmxmove, mo.y + st.tmymove):
             return
 
-    # Exhausted 3 slide iterations; stairstep fallback
+    # Third hit: stairstep fallback
     if not try_move(sim, mo, mo.x, mo.y + mo.momy):
         try_move(sim, mo, mo.x + mo.momx, mo.y)
 

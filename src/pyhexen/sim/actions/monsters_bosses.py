@@ -87,14 +87,18 @@ BOUNCE_TIME_UNIT: int = 35 // 2
 SORCFX4_RAPIDFIRE_TIME: int = 6 * 3
 SORCFX4_SPREAD_ANGLE: int = 20
 
-SORC_STOPPED: int = 0
-SORC_NORMAL: int = 1
-SORC_ACCELERATE: int = 2
-SORC_DECELERATE: int = 3
+SORC_DECELERATE: int = 0
+SORC_ACCELERATE: int = 1
+SORC_STOPPING: int = 2
+SORC_FIRESPELL: int = 3
+SORC_STOPPED: int = 4
+SORC_NORMAL: int = 5
+SORC_FIRING_SPELL: int = 6
 
+ANG_MAX: int = 0xFFFFFFFF
 BALL1_ANGLEOFFSET: int = 0
-BALL2_ANGLEOFFSET: int = (ANG_MAX_32 := 0xFFFFFFFF) // 3
-BALL3_ANGLEOFFSET: int = (ANG_MAX_32 // 3) * 2
+BALL2_ANGLEOFFSET: int = ANG_MAX // 3
+BALL3_ANGLEOFFSET: int = (ANG_MAX // 3) * 2
 
 KORAX_SPIRIT_LIFETIME: int = 5 * 35
 KORAX_COMMAND_HEIGHT: int = 120
@@ -955,232 +959,276 @@ def a_smokepuffexit(sim: GameSim, actor: Mobj) -> None:
 
 
 # =============================================================================
-# 3. Heresiarch (MT_SORCBOSS, MT_SORCBALL1..3, MT_SORCFX1..4) — p_enemy.c:3914-4578
+# 3. Heresiarch (MT_SORCBOSS, MT_SORCBALL1..3, MT_SORCFX1..4) — p_enemy.c:3910-4578
 # =============================================================================
+#
+# Sorcerer variables (p_enemy.c):
+#   special1  angle of ball 1 (the others are relative to it)
+#   special2  which ball to stop at in stopping mode (an MT_SORCBALL* type)
+#   args[0]   defence time
+#   args[1]   number of full rotations since stopping mode began
+#   args[2]   target orbit speed while accelerating or decelerating
+#   args[3]   movement mode (SORC_*)
+#   args[4]   current ball orbit speed
+# Ball variables:
+#   special1  previous fine angle of the ball (for the woosh)
+#   special2  rapid-fire countdown (FX4)
+#   args[0]   if set, no bounce sound
+#
+# args are bytes in the original, so every write goes through _set_arg_byte.
+
+
+def _set_arg_byte(actor: Mobj, idx: int, val: int) -> None:
+    """Store `val` in actor.args[idx] with C `byte` wrap-around."""
+    _set_arg(actor, idx, val & 0xFF)
+
+
+def _ball_angle_offset(actor: Mobj) -> int:
+    """BALLn_ANGLEOFFSET for a sorcerer ball (I_Error on anything else)."""
+    if actor.type == MobjType.MT_SORCBALL1:
+        return BALL1_ANGLEOFFSET
+    if actor.type == MobjType.MT_SORCBALL2:
+        return BALL2_ANGLEOFFSET
+    if actor.type == MobjType.MT_SORCBALL3:
+        return BALL3_ANGLEOFFSET
+    raise RuntimeError("corrupted sorcerer")
 
 
 @action("A_SorcSpinBalls")
 def a_sorcspinballs(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcSpinBalls (p_enemy.c:3959)."""
-    a_slowballs(actor)
-    _set_arg(actor, 0, 0)  # Currently no defense
-    _set_arg(actor, 3, SORC_NORMAL)
-    _set_arg(actor, 4, SORCBALL_INITIAL_SPEED)
+    """Port of A_SorcSpinBalls (p_enemy.c). Spawn the balls above the sorcerer's head."""
+    a_slowballs(sim, actor)
+    _set_arg_byte(actor, 0, 0)  # Currently no defense
+    _set_arg_byte(actor, 3, SORC_NORMAL)
+    _set_arg_byte(actor, 4, SORCBALL_INITIAL_SPEED)  # Initial orbit speed
     actor.special1 = ANG1
     z = actor.z - actor.floorclip + actor.info.height
 
     mo = spawn_mobj(sim, actor.x, actor.y, z, MobjType.MT_SORCBALL1)
     mo.target = actor
-    mo.special2 = BALL1_ANGLEOFFSET
-    actor.args = tuple(list(actor.args)[:5])  # type: ignore[assignment]
-
+    mo.special2 = SORCFX4_RAPIDFIRE_TIME
     mo = spawn_mobj(sim, actor.x, actor.y, z, MobjType.MT_SORCBALL2)
     mo.target = actor
-    mo.special2 = BALL2_ANGLEOFFSET
-
     mo = spawn_mobj(sim, actor.x, actor.y, z, MobjType.MT_SORCBALL3)
     mo.target = actor
-    mo.special2 = BALL3_ANGLEOFFSET
 
 
 @action("A_SorcBallOrbit")
 def a_sorcballorbit(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcBallOrbit (p_enemy.c:3996)."""
+    """Port of A_SorcBallOrbit (p_enemy.c)."""
     parent = actor.target
-    if parent is None:
-        return
-
+    assert parent is not None
+    mode = _get_arg(parent, 3)
     dist = parent.radius - (actor.radius << 1)
-    prevangle = int(actor.special1 or 0)
+    prevangle = int(actor.special1 or 0) & 0xFFFFFFFF
 
     if parent.health <= 0:
         set_mobj_state(sim, actor, actor.info.painstate)
 
-    mode = _get_arg(parent, 3)
-    if mode == SORC_STOPPED:
-        pass
-    elif mode == SORC_NORMAL:
-        a_sorcupdateballangle(actor)
-    elif mode == SORC_ACCELERATE:
+    baseangle = int(parent.special1 or 0)
+    angle = to_uint32(baseangle + _ball_angle_offset(actor))
+    actor.angle = angle
+    angle >>= ANGLETOFINESHIFT
+
+    if mode == SORC_NORMAL:  # Balls rotating normally
+        a_sorcupdateballangle(sim, actor)
+    elif mode == SORC_DECELERATE:  # Balls decelerating
+        a_decelballs(sim, actor)
+        a_sorcupdateballangle(sim, actor)
+    elif mode == SORC_ACCELERATE:  # Balls accelerating
         a_accelballs(sim, actor)
-    elif mode == SORC_DECELERATE:
-        a_decelballs(actor)
+        a_sorcupdateballangle(sim, actor)
+    elif mode == SORC_STOPPING:  # Balls stopping
+        if (
+            int(parent.special2 or 0) == actor.type
+            and _get_arg(parent, 1) > SORCBALL_SPEED_ROTATIONS
+            and abs(angle - ((parent.angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT)) < (30 << 5)
+        ):
+            # Can stop now
+            _set_arg_byte(parent, 3, SORC_FIRESPELL)
+            _set_arg_byte(parent, 4, 0)
+            # Set angle so ball angle == sorcerer angle
+            parent.special1 = to_uint32(parent.angle - _ball_angle_offset(actor))
+        else:
+            a_sorcupdateballangle(sim, actor)
+    elif mode == SORC_FIRESPELL:  # Casting spell
+        if int(parent.special2 or 0) == actor.type:
+            # Put sorcerer into special throw spell anim
+            if parent.health > 0:
+                set_mobj_state_nf(sim, parent, StateNum.S_SORC_ATTACK1)
 
-    angle = (
-        (to_uint32(int(parent.special1 or 0) + int(actor.special2 or 0))) >> ANGLETOFINESHIFT
-    ) & FINEMASK
-    actor.angle = to_uint32(angle << ANGLETOFINESHIFT)
+            if actor.type == MobjType.MT_SORCBALL1 and sim.rng.p_random() < 200:
+                _emit_sound(sim, None, SfxEnum.SFX_SORCERER_SPELLCAST, full_volume=True)
+                actor.special2 = SORCFX4_RAPIDFIRE_TIME
+                _set_arg_byte(actor, 4, 128)
+                _set_arg_byte(parent, 3, SORC_FIRING_SPELL)
+            else:
+                a_castsorcererspell(sim, actor)
+                _set_arg_byte(parent, 3, SORC_STOPPED)
+    elif mode == SORC_FIRING_SPELL:
+        if int(parent.special2 or 0) == actor.type:
+            countdown = int(actor.special2 or 0)
+            actor.special2 = countdown - 1
+            if countdown <= 0:
+                # Done rapid firing
+                _set_arg_byte(parent, 3, SORC_STOPPED)
+                # Back to orbit balls
+                if parent.health > 0:
+                    set_mobj_state_nf(sim, parent, StateNum.S_SORC_ATTACK4)
+            else:
+                # Do rapid fire spell
+                a_sorcoffense2(sim, actor)
+    # SORC_STOPPED and anything else: balls stay put
 
-    if (
-        mode == SORC_ACCELERATE
-        and _get_arg(parent, 4) >= SORCBALL_TERMINAL_SPEED
-        and actor.type == int(_get_arg(parent, 2))
-        and not (parent.health <= 0)
-    ):
-        parent_fine = ((parent.angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT) & FINEMASK
-        if abs(angle - parent_fine) < (30 << 5):
-            # Can stop now - cast spell
-            _set_arg(parent, 3, SORC_STOPPED)
-            set_mobj_state(sim, parent, StateNum.S_SORC_ATK4)
-
-    # Set coordinates
-    x = parent.x + fixed_mul(dist, fine_cosine(angle))
-    y = parent.y + fixed_mul(dist, fine_sine(angle))
-    z = parent.z - parent.floorclip + parent.info.height
-    if _get_arg(parent, 0):  # Defense active
-        z -= SORC_DEFENSE_HEIGHT * FRACUNIT
-
-    actor.x = x
-    actor.y = y
-    actor.z = z
-    actor.special1 = angle
-    _ = prevangle
+    if angle < prevangle and _get_arg(parent, 4) == SORCBALL_TERMINAL_SPEED:
+        _set_arg_byte(parent, 1, _get_arg(parent, 1) + 1)  # Bump rotation counter
+        # Completed full rotation - make woosh sound
+        _emit_sound(sim, actor, SfxEnum.SFX_SORCERER_BALLWOOSH)
+    actor.special1 = angle  # Set previous angle
+    actor.x = parent.x + fixed_mul(dist, fine_cosine(angle))
+    actor.y = parent.y + fixed_mul(dist, fine_sine(angle))
+    actor.z = parent.z - parent.floorclip + parent.info.height
 
 
 @action("A_SpeedBalls")
-def a_speedballs(actor: Mobj) -> None:
-    """Port of A_SpeedBalls (p_enemy.c:4082)."""
-    _set_arg(actor, 3, SORC_ACCELERATE)
-    _set_arg(actor, 2, int(MobjType.MT_SORCBALL1) + (actor.lastlook % 3))
+def a_speedballs(sim: GameSim, actor: Mobj) -> None:
+    """Port of A_SpeedBalls (p_enemy.c). Actor is the sorcerer."""
+    _set_arg_byte(actor, 3, SORC_ACCELERATE)  # speed mode
+    _set_arg_byte(actor, 2, SORCBALL_TERMINAL_SPEED)  # target speed
 
 
 @action("A_SlowBalls")
-def a_slowballs(actor: Mobj) -> None:
-    """Port of A_SlowBalls (p_enemy.c:4095)."""
-    _set_arg(actor, 3, SORC_DECELERATE)
+def a_slowballs(sim: GameSim, actor: Mobj) -> None:
+    """Port of A_SlowBalls (p_enemy.c). Actor is the sorcerer."""
+    _set_arg_byte(actor, 3, SORC_DECELERATE)  # slow mode
+    _set_arg_byte(actor, 2, SORCBALL_INITIAL_SPEED)  # target speed
 
 
 @action("A_StopBalls")
-def a_stopballs(actor: Mobj) -> None:
-    """Port of A_StopBalls (p_enemy.c:4109)."""
-    parent = actor.target
-    if parent is None:
-        return
-    _set_arg(parent, 3, SORC_STOPPED)
-    _set_arg(parent, 1, 0)
+def a_stopballs(sim: GameSim, actor: Mobj) -> None:
+    """Port of A_StopBalls (p_enemy.c). Stop when the rotation reaches the ball in special2.
+
+    Actor is the sorcerer.
+    """
+    chance = sim.rng.p_random()
+    _set_arg_byte(actor, 3, SORC_STOPPING)  # stopping mode
+    _set_arg_byte(actor, 1, 0)  # Reset rotation counter
+
+    if _get_arg(actor, 0) <= 0 and chance < 200:
+        actor.special2 = int(MobjType.MT_SORCBALL2)  # Blue
+    elif actor.health < (actor.info.spawnhealth >> 1) and chance < 200:
+        actor.special2 = int(MobjType.MT_SORCBALL3)  # Green
+    else:
+        actor.special2 = int(MobjType.MT_SORCBALL1)  # Yellow
 
 
 @action("A_AccelBalls")
 def a_accelballs(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_AccelBalls (p_enemy.c:4124)."""
+    """Port of A_AccelBalls (p_enemy.c). Increase the orbit speed; actor is a ball."""
     sorc = actor.target
-    if sorc is None:
-        return
-    speed = _get_arg(sorc, 4)
-    if speed < SORCBALL_TERMINAL_SPEED:
-        speed += 1
-        _set_arg(sorc, 4, speed)
+    assert sorc is not None
+    if _get_arg(sorc, 4) < _get_arg(sorc, 2):
+        _set_arg_byte(sorc, 4, _get_arg(sorc, 4) + 1)
     else:
-        _set_arg(sorc, 4, SORCBALL_TERMINAL_SPEED)
-        if speed >= SORCBALL_TERMINAL_SPEED:
-            # Start rotation counter
-            rotations = _get_arg(sorc, 1)
-            if rotations == 0:
-                _set_arg(sorc, 1, SORCBALL_SPEED_ROTATIONS)
-    a_sorcupdateballangle(actor)
-    _ = sim
+        _set_arg_byte(sorc, 3, SORC_NORMAL)
+        if _get_arg(sorc, 4) >= SORCBALL_TERMINAL_SPEED:
+            # Reached terminal velocity - stop balls
+            a_stopballs(sim, sorc)
 
 
 @action("A_DecelBalls")
-def a_decelballs(actor: Mobj) -> None:
-    """Port of A_DecelBalls (p_enemy.c:4152)."""
+def a_decelballs(sim: GameSim, actor: Mobj) -> None:
+    """Port of A_DecelBalls (p_enemy.c). Decrease the orbit speed; actor is a ball."""
     sorc = actor.target
-    if sorc is None:
-        return
-    speed = _get_arg(sorc, 4)
-    if speed > SORCBALL_INITIAL_SPEED:
-        speed -= 1
-        _set_arg(sorc, 4, speed)
+    assert sorc is not None
+    if _get_arg(sorc, 4) > _get_arg(sorc, 2):
+        _set_arg_byte(sorc, 4, _get_arg(sorc, 4) - 1)
     else:
-        _set_arg(sorc, 4, SORCBALL_INITIAL_SPEED)
-        _set_arg(sorc, 3, SORC_NORMAL)
-    a_sorcupdateballangle(actor)
+        _set_arg_byte(sorc, 3, SORC_NORMAL)
 
 
 @action("A_SorcUpdateBallAngle")
-def a_sorcupdateballangle(actor: Mobj) -> None:
-    """Port of A_SorcUpdateBallAngle (p_enemy.c:4170)."""
-    parent = actor.target
-    if parent is None:
-        return
+def a_sorcupdateballangle(sim: GameSim, actor: Mobj) -> None:
+    """Port of A_SorcUpdateBallAngle (p_enemy.c). Advance the base angle (first ball only)."""
     if actor.type == MobjType.MT_SORCBALL1:
+        parent = actor.target
+        assert parent is not None
         parent.special1 = to_uint32(int(parent.special1 or 0) + ANG1 * _get_arg(parent, 4))
 
 
 @action("A_CastSorcererSpell")
 def a_castsorcererspell(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_CastSorcererSpell (p_enemy.c:4187)."""
-    spell = _get_arg(actor, 2)
+    """Port of A_CastSorcererSpell (p_enemy.c). Actor is the ball whose spell is cast."""
+    parent = actor.target
+    assert parent is not None
+
     _emit_sound(sim, None, SfxEnum.SFX_SORCERER_SPELLCAST, full_volume=True)
 
     # Put sorcerer into throw spell animation
-    if spell == int(MobjType.MT_SORCBALL1) and actor.health > (actor.info.spawnhealth // 3):
-        spell = int(MobjType.MT_SORCBALL2)
-        _set_arg(actor, 2, spell)
+    if parent.health > 0:
+        set_mobj_state_nf(sim, parent, StateNum.S_SORC_ATTACK4)
 
-    z = actor.z - actor.floorclip + actor.info.height - 30 * FRACUNIT
-
-    if spell == int(MobjType.MT_SORCBALL1):
-        # Summon Bishops
-        mo = spawn_mobj(sim, actor.x, actor.y, z, MobjType.MT_SORCFX3)
-        mo.target = actor
-        mo.angle = actor.angle
-        _set_arg(actor, 3, SORC_DECELERATE)
-    elif spell == int(MobjType.MT_SORCBALL2):
-        # Defensive reflective shield
-        z = actor.z - actor.floorclip + SORC_DEFENSE_HEIGHT * FRACUNIT
+    if actor.type == MobjType.MT_SORCBALL1:  # Offensive
+        a_sorcoffense1(sim, actor)
+    elif actor.type == MobjType.MT_SORCBALL2:  # Defensive
+        z = parent.z - parent.floorclip + SORC_DEFENSE_HEIGHT * FRACUNIT
         mo = spawn_mobj(sim, actor.x, actor.y, z, MobjType.MT_SORCFX2)
-        actor.flags2 |= MobjFlag2.MF2_REFLECTIVE | MobjFlag2.MF2_INVULNERABLE
-        _set_arg(actor, 0, SORC_DEFENSE_TIME)
-        if mo is not None:
-            mo.target = actor
-        _set_arg(actor, 3, SORC_DECELERATE)
-    elif spell == int(MobjType.MT_SORCBALL3):
-        # Offensive spell
-        if sim.rng.p_random() < 128:
-            set_mobj_state(sim, actor, StateNum.S_SORC_ATTACK1)
+        parent.flags2 |= MobjFlag2.MF2_REFLECTIVE | MobjFlag2.MF2_INVULNERABLE
+        _set_arg_byte(parent, 0, SORC_DEFENSE_TIME)
+        mo.target = parent
+    elif actor.type == MobjType.MT_SORCBALL3:  # Reinforcements
+        ang1 = to_uint32(actor.angle - ANG45)
+        ang2 = to_uint32(actor.angle + ANG45)
+        # The original tests the ball's health here, not the sorcerer's.
+        if actor.health < c_div(actor.info.spawnhealth, 3):  # Spawn 2 at a time
+            mo = spawn_missile_angle(sim, parent, MobjType.MT_SORCFX3, ang1, 4 * FRACUNIT)
+            if mo is not None:
+                mo.target = parent
+            mo = spawn_missile_angle(sim, parent, MobjType.MT_SORCFX3, ang2, 4 * FRACUNIT)
+            if mo is not None:
+                mo.target = parent
         else:
-            set_mobj_state(sim, actor, StateNum.S_SORC_ATTACK4)
+            if sim.rng.p_random() < 128:
+                ang1 = ang2
+            mo = spawn_missile_angle(sim, parent, MobjType.MT_SORCFX3, ang1, 4 * FRACUNIT)
+            if mo is not None:
+                mo.target = parent
 
 
 @action("A_SorcOffense1")
 def a_sorcoffense1(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcOffense1 (p_enemy.c:4260)."""
-    if actor.target is None:
-        return
+    """Port of A_SorcOffense1 (p_enemy.c). Actor is the ball."""
+    parent = actor.target
+    assert parent is not None
     ang1 = to_uint32(actor.angle + ANG1 * 70)
     ang2 = to_uint32(actor.angle - ANG1 * 70)
-    mo = spawn_missile_angle(sim, actor, MobjType.MT_SORCFX1, ang1, 0)
-    if mo is not None:
-        mo.target = actor
-        mo.special1 = actor.target
-        _set_arg(mo, 4, BOUNCE_TIME_UNIT)
-        _set_arg(mo, 3, 15)
-    mo = spawn_missile_angle(sim, actor, MobjType.MT_SORCFX1, ang2, 0)
-    if mo is not None:
-        mo.target = actor
-        mo.special1 = actor.target
-        _set_arg(mo, 4, BOUNCE_TIME_UNIT)
-        _set_arg(mo, 3, 15)
+    for ang in (ang1, ang2):
+        mo = spawn_missile_angle(sim, parent, MobjType.MT_SORCFX1, ang, 0)
+        if mo is not None:
+            mo.target = parent
+            mo.special1 = parent.target
+            _set_arg_byte(mo, 4, BOUNCE_TIME_UNIT)
+            _set_arg_byte(mo, 3, 15)  # Bounce time in seconds
 
 
 @action("A_SorcOffense2")
 def a_sorcoffense2(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcOffense2 (p_enemy.c:4289)."""
-    if actor.target is None:
-        return
-    dest = actor.target
-    index = (_get_arg(actor, 4) << 5) & FINEMASK
-    _set_arg(actor, 4, (_get_arg(actor, 4) + 15) & 255)
+    """Port of A_SorcOffense2 (p_enemy.c). Rapid-fire FX4; actor is the ball."""
+    parent = actor.target
+    assert parent is not None
+    dest = parent.target
+
+    index = _get_arg(actor, 4) << 5
+    _set_arg_byte(actor, 4, _get_arg(actor, 4) + 15)
     delta = fine_sine(index) * SORCFX4_SPREAD_ANGLE
     delta = (delta >> FRACBITS) * ANG1
     ang1 = to_uint32(actor.angle + delta)
-    mo = spawn_missile_angle(sim, actor, MobjType.MT_SORCFX4, ang1, 0)
+    mo = spawn_missile_angle(sim, parent, MobjType.MT_SORCFX4, ang1, 0)
     if mo is not None:
-        mo.special2 = 35 * 5 // 2
+        mo.special2 = 35 * 5 // 2  # 5 seconds
+        assert dest is not None
         dist = approx_distance(dest.x - mo.x, dest.y - mo.y)
-        denom = mo.info.speed if mo.info.speed != 0 else 1
-        dist = c_div(dist, denom)
+        dist = c_div(dist, mo.info.speed)
         if dist < 1:
             dist = 1
         mo.momz = c_div(dest.z - mo.z, dist)
@@ -1188,97 +1236,90 @@ def a_sorcoffense2(sim: GameSim, actor: Mobj) -> None:
 
 @action("A_SorcBossAttack")
 def a_sorcbossattack(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcBossAttack (p_enemy.c:4325)."""
-    _set_arg(actor, 4, 0)
-    actor.special1 = to_uint32(actor.angle + ANG90)
-    a_speedballs(actor)
-    _ = sim
+    """Port of A_SorcBossAttack (p_enemy.c). Resume ball spinning."""
+    _set_arg_byte(actor, 3, SORC_ACCELERATE)
+    _set_arg_byte(actor, 2, SORCBALL_INITIAL_SPEED)
 
 
 @action("A_SpawnFizzle")
 def a_spawnfizzle(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SpawnFizzle (p_enemy.c:4340)."""
+    """Port of A_SpawnFizzle (p_enemy.c). Spell-cast magic fizzle."""
     dist = 5 * FRACUNIT
-    angle = (actor.angle >> ANGLETOFINESHIFT) & FINEMASK
+    angle = (actor.angle & 0xFFFFFFFF) >> ANGLETOFINESHIFT
     speed = actor.info.speed
     x = actor.x + fixed_mul(dist, fine_cosine(angle))
     y = actor.y + fixed_mul(dist, fine_sine(angle))
     z = actor.z - actor.floorclip + (actor.height >> 1)
     for _ in range(5):
         mo = spawn_mobj(sim, x, y, z, MobjType.MT_SORCSPARK1)
-        r_ang = (angle + ((sim.rng.p_random() % 5) << 1)) & FINEMASK
-        mo.momx = fixed_mul(sim.rng.p_random() % speed, fine_cosine(r_ang))
-        mo.momy = fixed_mul(sim.rng.p_random() % speed, fine_sine(r_ang))
+        rangle = (angle + ((sim.rng.p_random() % 5) << 1)) & FINEMASK
+        mo.momx = fixed_mul(sim.rng.p_random() % speed, fine_cosine(rangle))
+        mo.momy = fixed_mul(sim.rng.p_random() % speed, fine_sine(rangle))
         mo.momz = FRACUNIT * 2
 
 
 @action("A_SorcFX1Seek")
 def a_sorcfx1seek(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcFX1Seek (p_enemy.c:4372)."""
+    """Port of A_SorcFX1Seek (p_enemy.c). Yellow spell (offense)."""
     a_bouncecheck(sim, actor)
     seeker_missile(actor, ANG1 * 2, ANG1 * 6, sim)
 
 
 @action("A_SorcFX2Split")
 def a_sorcfx2split(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcFX2Split (p_enemy.c:4389)."""
-    parent = actor.target
-    if parent is None:
-        remove_mobj(sim, actor)
-        return
-    angle = parent.angle
-    for _ in range(8):
-        mo = spawn_mobj(sim, actor.x, actor.y, actor.z, MobjType.MT_SORCFX2_T1)
-        mo.target = parent
-        _set_arg(mo, 0, 0)  # Orbit direction = CCW
-        mo.special1 = angle  # Set angle
-        set_mobj_state_nf(sim, mo, StateNum.S_SORCFX2_ORBIT1)
+    """Port of A_SorcFX2Split (p_enemy.c). Split the blue (defence) ball in two."""
+    mo = spawn_mobj(sim, actor.x, actor.y, actor.z, MobjType.MT_SORCFX2)
+    mo.target = actor.target
+    _set_arg_byte(mo, 0, 0)  # CW
+    mo.special1 = actor.angle  # Set angle
+    set_mobj_state_nf(sim, mo, StateNum.S_SORCFX2_ORBIT1)
 
-        mo = spawn_mobj(sim, actor.x, actor.y, actor.z, MobjType.MT_SORCFX2_T1)
-        mo.target = parent
-        _set_arg(mo, 0, 1)  # Orbit direction = CW
-        mo.special1 = angle
-        set_mobj_state_nf(sim, mo, StateNum.S_SORCFX2_ORBIT1)
-
-        angle = to_uint32(angle + ANG45)
+    mo = spawn_mobj(sim, actor.x, actor.y, actor.z, MobjType.MT_SORCFX2)
+    mo.target = actor.target
+    _set_arg_byte(mo, 0, 1)  # CCW
+    mo.special1 = actor.angle  # Set angle
+    set_mobj_state_nf(sim, mo, StateNum.S_SORCFX2_ORBIT1)
 
     set_mobj_state_nf(sim, actor, StateNum.S_NULL)
 
 
 @action("A_SorcFX2Orbit")
 def a_sorcfx2orbit(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcFX2Orbit (p_enemy.c:4425)."""
+    """Port of A_SorcFX2Orbit (p_enemy.c). Orbit FX2 about the sorcerer."""
     parent = actor.target
-    if parent is None or parent.health <= 0 or not _get_arg(parent, 0):
-        set_mobj_state_nf(sim, actor, actor.info.deathstate)
-        if parent is not None:
-            parent.flags2 &= ~(MobjFlag2.MF2_REFLECTIVE | MobjFlag2.MF2_INVULNERABLE)
-        return
-
-    if _get_arg(actor, 0) and (_get_arg(parent, 0) - 1 <= 0):
-        set_mobj_state_nf(sim, actor, actor.info.deathstate)
-        parent.flags2 &= ~(MobjFlag2.MF2_REFLECTIVE | MobjFlag2.MF2_INVULNERABLE)
-        _set_arg(parent, 0, 0)
-        return
-
+    assert parent is not None
     dist = parent.info.radius
-    if _get_arg(actor, 0):  # CW
+
+    if parent.health <= 0 or not _get_arg(parent, 0):  # Sorcerer is dead / time expired
+        set_mobj_state_nf(sim, actor, actor.info.deathstate)
+        _set_arg_byte(parent, 0, 0)
+        parent.flags2 &= ~MobjFlag2.MF2_REFLECTIVE
+        parent.flags2 &= ~MobjFlag2.MF2_INVULNERABLE
+
+    if _get_arg(actor, 0):
+        defense = _get_arg(parent, 0)
+        _set_arg_byte(parent, 0, defense - 1)
+        if defense <= 0:  # Time expired
+            set_mobj_state_nf(sim, actor, actor.info.deathstate)
+            _set_arg_byte(parent, 0, 0)
+            parent.flags2 &= ~MobjFlag2.MF2_REFLECTIVE
+
+    # Move to new position based on angle
+    z = parent.z - parent.floorclip + SORC_DEFENSE_HEIGHT * FRACUNIT
+    if _get_arg(actor, 0):  # Counter clock-wise
         actor.special1 = to_uint32(int(actor.special1 or 0) + ANG1 * 10)
-        angle = (int(actor.special1) >> ANGLETOFINESHIFT) & FINEMASK
+        angle = (int(actor.special1) & 0xFFFFFFFF) >> ANGLETOFINESHIFT
         x = parent.x + fixed_mul(dist, fine_cosine(angle))
         y = parent.y + fixed_mul(dist, fine_sine(angle))
-        z = parent.z - parent.floorclip + SORC_DEFENSE_HEIGHT * FRACUNIT
         z += fixed_mul(15 * FRACUNIT, fine_cosine(angle))
-        spawn_mobj(sim, x, y, z, MobjType.MT_SORCFX2_T1)
-        _set_arg(parent, 0, _get_arg(parent, 0) - 1)
-    else:  # CCW
+    else:  # Clock wise
         actor.special1 = to_uint32(int(actor.special1 or 0) - ANG1 * 10)
-        angle = (int(actor.special1) >> ANGLETOFINESHIFT) & FINEMASK
+        angle = (int(actor.special1) & 0xFFFFFFFF) >> ANGLETOFINESHIFT
         x = parent.x + fixed_mul(dist, fine_cosine(angle))
         y = parent.y + fixed_mul(dist, fine_sine(angle))
-        z = parent.z - parent.floorclip + 20 * FRACUNIT
         z += fixed_mul(20 * FRACUNIT, fine_sine(angle))
-        spawn_mobj(sim, x, y, z, MobjType.MT_SORCFX2_T1)
+    # Spawn trailer
+    spawn_mobj(sim, x, y, z, MobjType.MT_SORCFX2_T1)
 
     actor.x = x
     actor.y = y
@@ -1287,25 +1328,23 @@ def a_sorcfx2orbit(sim: GameSim, actor: Mobj) -> None:
 
 @action("A_SorcererBishopEntry")
 def a_sorcererbishopentry(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcererBishopEntry (p_enemy.c:4473)."""
+    """Port of A_SorcererBishopEntry (p_enemy.c)."""
     spawn_mobj(sim, actor.x, actor.y, actor.z, MobjType.MT_SORCFX3_EXPLOSION)
     _emit_sound(sim, actor, actor.info.seesound)
 
 
 @action("A_SpawnBishop")
 def a_spawnbishop(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SpawnBishop (p_enemy.c:4485)."""
+    """Port of A_SpawnBishop (p_enemy.c). Green spell: spawn a bishop."""
     mo = spawn_mobj(sim, actor.x, actor.y, actor.z, MobjType.MT_BISHOP)
     if not p_test_mobj_location(sim, mo):
         set_mobj_state(sim, mo, StateNum.S_NULL)
-    elif actor.target is not None:
-        mo.target = actor.target.target
-    set_mobj_state_nf(sim, actor, StateNum.S_NULL)
+    set_mobj_state(sim, actor, StateNum.S_NULL)
 
 
 @action("A_SorcFX4Check")
 def a_sorcfx4check(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcFX4Check (p_enemy.c:4525)."""
+    """Port of A_SorcFX4Check (p_enemy.c)."""
     s2 = int(actor.special2 or 0)
     actor.special2 = s2 - 1
     if s2 <= 0:
@@ -1314,26 +1353,26 @@ def a_sorcfx4check(sim: GameSim, actor: Mobj) -> None:
 
 @action("A_SorcBallPop")
 def a_sorcballpop(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_SorcBallPop (p_enemy.c:4525)."""
+    """Port of A_SorcBallPop (p_enemy.c). Ball death."""
     _emit_sound(sim, None, SfxEnum.SFX_SORCERER_BALLPOP, full_volume=True)
     actor.flags &= ~MobjFlag.MF_NOGRAVITY
     actor.flags2 |= MobjFlag2.MF2_LOGRAV
     actor.momx = ((sim.rng.p_random() % 10) - 5) << FRACBITS
     actor.momy = ((sim.rng.p_random() % 10) - 5) << FRACBITS
     actor.momz = (2 + (sim.rng.p_random() % 3)) << FRACBITS
-    actor.special2 = 4 * FRACUNIT
-    _set_arg(actor, 4, BOUNCE_TIME_UNIT)
-    _set_arg(actor, 3, 5)
+    actor.special2 = 4 * FRACUNIT  # Initial bounce factor
+    _set_arg_byte(actor, 4, BOUNCE_TIME_UNIT)  # Bounce time unit
+    _set_arg_byte(actor, 3, 5)  # Bounce time in seconds
 
 
 @action("A_BounceCheck")
 def a_bouncecheck(sim: GameSim, actor: Mobj) -> None:
-    """Port of A_BounceCheck (p_enemy.c:4544)."""
+    """Port of A_BounceCheck (p_enemy.c)."""
     a4 = _get_arg(actor, 4)
-    _set_arg(actor, 4, a4 - 1)
+    _set_arg_byte(actor, 4, a4 - 1)
     if a4 <= 0:
         a3 = _get_arg(actor, 3)
-        _set_arg(actor, 3, a3 - 1)
+        _set_arg_byte(actor, 3, a3 - 1)
         if a3 <= 0:
             set_mobj_state(sim, actor, actor.info.deathstate)
             if actor.type in (
@@ -1342,10 +1381,10 @@ def a_bouncecheck(sim: GameSim, actor: Mobj) -> None:
                 MobjType.MT_SORCBALL3,
             ):
                 _emit_sound(sim, None, SfxEnum.SFX_SORCERER_BIGBALLEXPLODE, full_volume=True)
-            else:
-                _emit_sound(sim, actor, SfxEnum.SFX_SORCERER_BALLEXPLODE)
+            elif actor.type == MobjType.MT_SORCFX1:
+                _emit_sound(sim, None, SfxEnum.SFX_SORCERER_HEADSCREAM, full_volume=True)
         else:
-            _set_arg(actor, 4, BOUNCE_TIME_UNIT)
+            _set_arg_byte(actor, 4, BOUNCE_TIME_UNIT)
 
 
 # =============================================================================

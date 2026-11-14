@@ -769,12 +769,13 @@ def test_zero_mass_actor_safe(sim: GameSim) -> None:
     assert target.health < target.info.spawnhealth
 
 
-def test_target_tracer_cleaned_on_death(sim: GameSim) -> None:
+def test_target_kept_on_death(sim: GameSim) -> None:
+    """P_KillMobj leaves target->target alone (a dying bishop's A_Explode uses it)."""
     target = make_mobj(sim, MobjType.MT_ETTIN)
     other = make_mobj(sim, MobjType.MT_CENTAUR)
     target.target = other
     kill_mobj(sim, None, target)
-    assert target.target is None
+    assert target.target is other
 
 
 def test_environmental_death_no_source(sim: GameSim) -> None:

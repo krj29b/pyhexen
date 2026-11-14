@@ -731,15 +731,10 @@ def a_chase(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> None:
         elif delta < 0:
             actor.angle = to_uint32(actor.angle + (ANG90 // 2))
 
-    # Target loss or invalidation
-    if (
-        actor.target is None
-        or not (actor.target.flags & MobjFlag.MF_SHOOTABLE)
-        or actor.target.health <= 0
-    ):
+    # Look for a new target (vanilla leaves actor->target as it is when none is found)
+    if actor.target is None or not (actor.target.flags & MobjFlag.MF_SHOOTABLE):
         if look_for_players(actor, True, sim):
             return
-        actor.target = None
         if sim is not None:
             set_mobj_state(sim, actor, actor.info.spawnstate)
         else:
@@ -1073,6 +1068,13 @@ def a_explode(actor: Mobj | GameSim, sim: GameSim | Mobj | None = None) -> None:
         from pyhexen.sim.attacks import radius_attack
 
         radius_attack(sim, actor, actor.target, damage, distance, damage_self)
+        if (
+            actor.z <= actor.floorz + (distance << FRACBITS)
+            and actor.type != MobjType.MT_POISONCLOUD
+        ):
+            from pyhexen.sim.actions.monsters_common import hit_floor
+
+            hit_floor(sim, actor)
 
 
 @action("A_FreezeDeath")

@@ -31,6 +31,7 @@ from pyhexen.core.fixed import (
     c_div,
     fixed_div,
     fixed_mul,
+    to_int32,
 )
 from pyhexen.sim.info_data import (
     MobjFlag,
@@ -166,7 +167,7 @@ def seeker_missile(
             dist = 1
         target_midz = target.z + (target.height >> 1)
         actor_midz = actor.z + (actor.height >> 1)
-        actor.momz = (target_midz - actor_midz) // dist
+        actor.momz = c_div(target_midz - actor_midz, dist)
 
     return True
 
@@ -238,7 +239,7 @@ def spawn_missile(
     if dist < 1:
         dist = 1
 
-    th.momz = (dest.z - source.z) // dist
+    th.momz = c_div(dest.z - source.z, dist)
     return th if check_missile_spawn(sim, th) else None
 
 
@@ -276,7 +277,7 @@ def spawn_missile_xyz(
     if dist < 1:
         dist = 1
 
-    th.momz = (dest.z - source.z) // dist
+    th.momz = c_div(dest.z - source.z, dist)
     return th if check_missile_spawn(sim, th) else None
 
 
@@ -874,79 +875,53 @@ def radius_attack(
 ) -> None:
     """Port of P_RadiusAttack and PIT_RadiusAttack (p_map.c).
 
-    Inflicts distance-falloff splash damage to shootable actors in surrounding blocks
-    via damage_mobj.
+    Damages shootable things near `spot`, falling off with distance. Like vanilla, the
+    block box is `(distance + MAXRADIUS) << FRACBITS` computed in int32: MAXRADIUS is
+    already fixed point, so the shift wraps and the box is only `distance` units wide.
     """
-    if damage <= 0:
-        return
-
     if distance is None:
         distance = damage
-
     if distance <= 0:
         return
-
     from pyhexen.sim.inter import damage_mobj
 
-    targets: list[Mobj] = []
-    if sim.level is not None and sim.level.blockmap is not None:
-        bm = sim.level.blockmap
-        dist_box = (distance + MAXRADIUS) << FRACBITS
-        yh = (spot.y + dist_box - bm.org_y) >> MAPBLOCKSHIFT
-        yl = (spot.y - dist_box - bm.org_y) >> MAPBLOCKSHIFT
-        xh = (spot.x + dist_box - bm.org_x) >> MAPBLOCKSHIFT
-        xl = (spot.x - dist_box - bm.org_x) >> MAPBLOCKSHIFT
-
-        yl = max(0, min(bm.height - 1, yl))
-        yh = max(0, min(bm.height - 1, yh))
-        xl = max(0, min(bm.width - 1, xl))
-        xh = max(0, min(bm.width - 1, xh))
-
-        visited: set[int] = set()
-        for by in range(yl, yh + 1):
-            for bx in range(xl, xh + 1):
-                idx = by * bm.width + bx
-                mo = bm.block_links[idx]
-                while mo is not None:
-                    if id(mo) not in visited:
-                        visited.add(id(mo))
-                        targets.append(mo)
-                    mo = mo.bnext
-    else:
-        for th in sim.thinkers:
-            if isinstance(th, Mobj):
-                targets.append(th)
-
-    for thing in targets:
+    def pit_radius_attack(thing: Mobj) -> bool:
+        """Port of PIT_RadiusAttack (p_map.c)."""
         if not (thing.flags & MobjFlag.MF_SHOOTABLE):
-            continue
-
+            return True
         if not damage_source and thing is source:
-            continue
-
-        # Vertical culling: abs(dz >> FRACBITS) > 2 * distance
+            return True  # don't damage the source of the explosion
         if abs((thing.z - spot.z) >> FRACBITS) > 2 * distance:
-            continue
-
+            return True  # too high/low
         dx = abs(thing.x - spot.x)
         dy = abs(thing.y - spot.y)
-        chebyshev = dx if dx > dy else dy
-        dist = (chebyshev - thing.radius) >> FRACBITS
+        dist = dx if dx > dy else dy
+        dist = (dist - thing.radius) >> FRACBITS
         if dist < 0:
             dist = 0
         if dist >= distance:
-            continue
-
-        if check_sight(sim, thing, spot):
-            calculated_damage = c_div(damage * (distance - dist), distance) + 1
+            return True  # out of range
+        if check_sight(sim, thing, spot):  # OK to damage, target is in direct path
+            amount = c_div(damage * (distance - dist), distance) + 1
             if thing.player is not None:
-                calculated_damage >>= 2
+                amount >>= 2
+            damage_mobj(sim, target=thing, inflictor=spot, source=source, damage=amount)
+        return True
 
-            if calculated_damage > 0:
-                damage_mobj(
-                    sim,
-                    target=thing,
-                    inflictor=spot,
-                    source=source,
-                    damage=calculated_damage,
-                )
+    level = sim.level
+    if level is None or level.blockmap is None:
+        # No blockmap (bare test sims): visit every thing in thinker order.
+        for th in list(sim.thinkers):
+            if isinstance(th, Mobj):
+                pit_radius_attack(th)
+        return
+
+    bm = level.blockmap
+    dist_box = to_int32((distance + MAXRADIUS) << FRACBITS)
+    yh = (spot.y + dist_box - bm.org_y) >> MAPBLOCKSHIFT
+    yl = (spot.y - dist_box - bm.org_y) >> MAPBLOCKSHIFT
+    xh = (spot.x + dist_box - bm.org_x) >> MAPBLOCKSHIFT
+    xl = (spot.x - dist_box - bm.org_x) >> MAPBLOCKSHIFT
+    for by in range(yl, yh + 1):
+        for bx in range(xl, xh + 1):
+            bm.block_things_iterator(bx, by, pit_radius_attack)

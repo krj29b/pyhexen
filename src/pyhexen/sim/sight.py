@@ -141,11 +141,7 @@ def check_sight(
         if resolved_level.reject.check_sight_reject(sec1.index, sec2.index):
             return False
 
-    # 2. Trivial same-actor / same-point check
-    if t1 is t2 or (t1.x == t2.x and t1.y == t2.y):
-        return True
-
-    # 3. Eye level calculation & slope aperture initialization
+    # 2. Eye level calculation & slope aperture initialization
     # Looker eye is at 75% of actor height: sightzstart = z + height - (height >> 2)
     sightzstart = t1.z + t1.height - (t1.height >> 2)
     topslope = (t2.z + t2.height) - sightzstart
@@ -302,12 +298,10 @@ def _sight_path_traverse(
             ld.dx,
             ld.dy,
         )
-        if frac <= 0:
-            frac = 1
-        elif frac > FRACUNIT:
-            frac = FRACUNIT
         intercepts.append((frac, ld))
 
+    # P_SightTraverseIntercepts picks the smallest frac each pass (first one on ties),
+    # which a stable sort reproduces. Fractions are not clamped.
     intercepts.sort(key=lambda item: item[0])
 
     for frac, ld in intercepts:

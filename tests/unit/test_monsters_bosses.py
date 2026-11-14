@@ -10,21 +10,26 @@ from pathlib import Path
 import pytest
 from tests.fixtures.wadbuilder import MapBuilder, WadBuilder
 
-from pyhexen.core.angles import ANG1, ANG45, ANG90
-from pyhexen.core.fixed import FRACUNIT
+from pyhexen.core.angles import ANG1, ANG45, ANG90, fine_cosine
+from pyhexen.core.fixed import FRACUNIT, fixed_mul
 from pyhexen.core.random import Random
 from pyhexen.sim.actions import get_action, is_action_implemented
 from pyhexen.sim.actions.monsters_bosses import (
+    BALL2_ANGLEOFFSET,
     KORAX_FIRST_TELEPORT_TID,
     MAULATORTICS,
     SORC_ACCELERATE,
     SORC_DECELERATE,
+    SORC_FIRESPELL,
+    SORC_FIRING_SPELL,
     SORC_NORMAL,
     SORC_STOPPED,
+    SORC_STOPPING,
     SORCBALL_INITIAL_SPEED,
+    SORCBALL_SPEED_ROTATIONS,
     SORCBALL_TERMINAL_SPEED,
+    SORCFX4_RAPIDFIRE_TIME,
     a_accelballs,
-    a_bouncecheck,
     a_castsorcererspell,
     a_cholyattack2,
     a_cholycheckscream,
@@ -67,10 +72,8 @@ from pyhexen.sim.actions.monsters_bosses import (
     a_mntrfloorfire,
     a_mstafftrack,
     a_mstaffweave,
-    a_slowballs,
     a_smokepuffexit,
     a_sorcballorbit,
-    a_sorcballpop,
     a_sorcbossattack,
     a_sorcererbishopentry,
     a_sorcfx1seek,
@@ -80,9 +83,8 @@ from pyhexen.sim.actions.monsters_bosses import (
     a_sorcoffense1,
     a_sorcoffense2,
     a_sorcspinballs,
-    a_sorcupdateballangle,
     a_spawnbishop,
-    a_spawnfizzle,
+    a_speedballs,
     a_stopballs,
     check_minotaur_age,
     dragon_seek,
@@ -91,6 +93,7 @@ from pyhexen.sim.actions.monsters_bosses import (
     rough_monster_search,
     spawn_korax_missile,
 )
+from pyhexen.sim.attacks import radius_attack
 from pyhexen.sim.game_sim import GameSim
 from pyhexen.sim.info_data import (
     STATES,
@@ -99,7 +102,7 @@ from pyhexen.sim.info_data import (
     MobjType,
     StateNum,
 )
-from pyhexen.sim.inter import minotaur_slam
+from pyhexen.sim.inter import kill_mobj, minotaur_slam
 from pyhexen.sim.mobj import (
     Mobj,
     insert_mobj_into_tid_list,
@@ -370,92 +373,231 @@ def test_minotaur_fades_summon_age_and_combat(
     assert mntr.health <= 0
 
 
-def test_heresiarch_balls_orbit_and_spells(sim: GameSim, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify Heresiarch spinning balls, acceleration/deceleration, and all 3 spell types."""
+def _spawn_sorcerer(sim: GameSim) -> tuple[Mobj, Mobj, Mobj, Mobj, Mobj]:
     sorc = spawn_mobj(sim, 0, 0, 0, MobjType.MT_SORCBOSS)
     target = spawn_mobj(sim, 256 * FRACUNIT, 0, 0, MobjType.MT_PLAYER_FIGHTER)
     sorc.target = target
-
     a_sorcspinballs(sim, sorc)
     b1 = _mobjs_of_type(sim, MobjType.MT_SORCBALL1)
     b2 = _mobjs_of_type(sim, MobjType.MT_SORCBALL2)
     b3 = _mobjs_of_type(sim, MobjType.MT_SORCBALL3)
-    assert len(b1) == 1 and len(b2) == 1 and len(b3) == 1
+    assert len(b1) == len(b2) == len(b3) == 1
+    return sorc, target, b1[0], b2[0], b3[0]
+
+
+def test_sorc_spin_balls_initial_state(sim: GameSim) -> None:
+    """A_SorcSpinBalls: slow-ball target speed, normal mode, ball 1 holds the FX4 countdown."""
+    sorc, _target, b1, b2, b3 = _spawn_sorcerer(sim)
+    assert sorc.args[0] == 0
+    assert sorc.args[2] == SORCBALL_INITIAL_SPEED  # from A_SlowBalls
     assert sorc.args[3] == SORC_NORMAL
     assert sorc.args[4] == SORCBALL_INITIAL_SPEED
+    assert sorc.special1 == ANG1
+    assert b1.special2 == SORCFX4_RAPIDFIRE_TIME
+    assert b2.target is sorc and b3.target is sorc
 
-    # Orbit in normal mode updates ball coordinates and parent angle
-    a_sorcballorbit(sim, b1[0])
-    assert b1[0].z > sorc.z
 
-    # Speed balls -> accelerate -> stop balls -> slow balls -> decelerate
-    a_sorcbossattack(sim, sorc)
+def test_sorc_ball_orbit_positions_and_advances_base_angle(sim: GameSim) -> None:
+    """Only ball 1 advances the base angle; each ball sits at its fixed offset."""
+    sorc, _target, b1, b2, _b3 = _spawn_sorcerer(sim)
+    a_sorcballorbit(sim, b2)
+    assert sorc.special1 == ANG1  # ball 2 does not advance the angle
+    assert b2.angle == (ANG1 + BALL2_ANGLEOFFSET) & 0xFFFFFFFF
+    a_sorcballorbit(sim, b1)
+    assert sorc.special1 == ANG1 + ANG1 * SORCBALL_INITIAL_SPEED
+    assert b1.special1 == ANG1 >> 19  # previous fine angle
+    dist = sorc.radius - (b1.radius << 1)
+    assert b1.x == sorc.x + fixed_mul(dist, fine_cosine(ANG1 >> 19))
+    assert b1.z == sorc.z - sorc.floorclip + sorc.info.height
+
+
+def test_sorc_accel_to_terminal_speed_starts_stopping(sim: GameSim) -> None:
+    """A_SpeedBalls -> A_AccelBalls to terminal speed -> A_StopBalls picks a ball."""
+    sorc, _target, b1, _b2, _b3 = _spawn_sorcerer(sim)
+    a_speedballs(sim, sorc)
     assert sorc.args[3] == SORC_ACCELERATE
-    for _ in range(25):
-        a_accelballs(sim, b1[0])
+    assert sorc.args[2] == SORCBALL_TERMINAL_SPEED
+    for _ in range(SORCBALL_TERMINAL_SPEED - SORCBALL_INITIAL_SPEED):
+        a_accelballs(sim, b1)
     assert sorc.args[4] == SORCBALL_TERMINAL_SPEED
+    assert sorc.args[3] == SORC_ACCELERATE
+    before = sim.rng.prndindex
+    a_accelballs(sim, b1)  # reached the target: stop the balls
+    assert sim.rng.prndindex == (before + 1) & 0xFF
+    assert sorc.args[3] == SORC_STOPPING
+    assert sorc.args[1] == 0
+    assert sorc.special2 in (
+        int(MobjType.MT_SORCBALL1),
+        int(MobjType.MT_SORCBALL2),
+        int(MobjType.MT_SORCBALL3),
+    )
 
-    a_slowballs(sorc)
-    assert sorc.args[3] == SORC_DECELERATE
-    for _ in range(25):
-        a_decelballs(b1[0])
+
+def test_sorc_stop_balls_choice(sim: GameSim) -> None:
+    """A_StopBalls: blue with no defence, green below half health, else yellow."""
+    sorc = spawn_mobj(sim, 0, 0, 0, MobjType.MT_SORCBOSS)
+    sim.rng.prndindex = 0  # next P_Random is RNDTABLE[1] = 8 (< 200)
+    a_stopballs(sim, sorc)
+    assert sorc.special2 == int(MobjType.MT_SORCBALL2)
+    sorc.args = (5, 0, 0, 0, 0)
+    sorc.health = sorc.info.spawnhealth // 2 - 1
+    sim.rng.prndindex = 0
+    a_stopballs(sim, sorc)
+    assert sorc.special2 == int(MobjType.MT_SORCBALL3)
+    sorc.health = sorc.info.spawnhealth
+    sim.rng.prndindex = 0
+    a_stopballs(sim, sorc)
+    assert sorc.special2 == int(MobjType.MT_SORCBALL1)
+
+
+def test_sorc_decel_returns_to_normal(sim: GameSim) -> None:
+    sorc, _target, b1, _b2, _b3 = _spawn_sorcerer(sim)
+    sorc.args = (0, 0, SORCBALL_INITIAL_SPEED, SORC_DECELERATE, SORCBALL_INITIAL_SPEED + 2)
+    a_decelballs(sim, b1)
+    a_decelballs(sim, b1)
     assert sorc.args[4] == SORCBALL_INITIAL_SPEED
+    assert sorc.args[3] == SORC_DECELERATE
+    a_decelballs(sim, b1)
     assert sorc.args[3] == SORC_NORMAL
 
-    a_stopballs(b1[0])
-    assert sorc.args[3] == SORC_STOPPED
-    a_sorcupdateballangle(b1[0])
 
-    # Spell 2: Defensive shield (MT_SORCBALL2) + split + orbit
-    sorc.args = (0, 0, int(MobjType.MT_SORCBALL2), SORC_STOPPED, 7)
-    a_castsorcererspell(sim, sorc)
+def test_sorc_stopping_ball_stops_facing_sorcerer(sim: GameSim) -> None:
+    """In stopping mode the chosen ball stops when it lines up with the sorcerer."""
+    sorc, _target, _b1, b2, _b3 = _spawn_sorcerer(sim)
+    sorc.angle = ANG90
+    sorc.special2 = int(MobjType.MT_SORCBALL2)
+    sorc.special1 = (ANG90 - BALL2_ANGLEOFFSET) & 0xFFFFFFFF
+    sorc.args = (0, SORCBALL_SPEED_ROTATIONS + 1, 0, SORC_STOPPING, SORCBALL_TERMINAL_SPEED)
+    a_sorcballorbit(sim, b2)
+    assert sorc.args[3] == SORC_FIRESPELL
+    assert sorc.args[4] == 0
+    assert sorc.special1 == (ANG90 - BALL2_ANGLEOFFSET) & 0xFFFFFFFF
+
+
+def test_sorc_fire_defensive_spell(sim: GameSim) -> None:
+    """Fire-spell mode with the blue ball casts the reflective shield."""
+    sorc, _target, _b1, b2, _b3 = _spawn_sorcerer(sim)
+    sorc.special2 = int(MobjType.MT_SORCBALL2)
+    sorc.args = (0, 0, 0, SORC_FIRESPELL, 0)
+    a_sorcballorbit(sim, b2)
+    assert sorc.args[3] == SORC_STOPPED
+    assert sorc.args[0] == 255
     assert sorc.flags2 & MobjFlag2.MF2_REFLECTIVE
     assert sorc.flags2 & MobjFlag2.MF2_INVULNERABLE
+    assert sorc.state_num == StateNum.S_SORC_ATTACK4
     fx2 = _mobjs_of_type(sim, MobjType.MT_SORCFX2)
-    assert len(fx2) == 1
-    a_sorcfx2split(sim, fx2[0])
-    orbiters = _mobjs_of_type(sim, MobjType.MT_SORCFX2_T1)
-    assert len(orbiters) == 16
-    a_sorcfx2orbit(sim, orbiters[0])
-    a_sorcfx2orbit(sim, orbiters[1])
+    assert len(fx2) == 1 and fx2[0].target is sorc
 
-    # Spell 1: Summon Bishop (when health <= spawnhealth // 3)
-    sorc.health = 100
-    sorc.args = (0, 0, int(MobjType.MT_SORCBALL1), SORC_STOPPED, 7)
-    a_castsorcererspell(sim, sorc)
+    a_sorcfx2split(sim, fx2[0])
+    halves = [m for m in _mobjs_of_type(sim, MobjType.MT_SORCFX2) if not m.removed]
+    assert sorted(m.args[0] for m in halves if m is not fx2[0]) == [0, 1]
+    for half in halves:
+        if half is not fx2[0]:
+            a_sorcfx2orbit(sim, half)
+    assert sorc.args[0] == 254  # only the counter-clockwise half counts down
+    assert _mobjs_of_type(sim, MobjType.MT_SORCFX2_T1)
+
+
+def test_sorc_rapid_fire_spell(sim: GameSim) -> None:
+    """Yellow ball with P_Random < 200 rapid-fires FX4 until its countdown runs out."""
+    sorc, _target, b1, _b2, _b3 = _spawn_sorcerer(sim)
+    sorc.special2 = int(MobjType.MT_SORCBALL1)
+    sorc.args = (0, 0, 0, SORC_FIRESPELL, 0)
+    sim.rng.prndindex = 0  # P_Random -> 8
+    a_sorcballorbit(sim, b1)
+    assert sorc.args[3] == SORC_FIRING_SPELL
+    assert b1.special2 == SORCFX4_RAPIDFIRE_TIME
+    assert b1.args[4] == 128
+    a_sorcballorbit(sim, b1)
+    assert len(_mobjs_of_type(sim, MobjType.MT_SORCFX4)) == 1
+    assert b1.args[4] == 143
+    b1.special2 = 0
+    a_sorcballorbit(sim, b1)
+    assert sorc.args[3] == SORC_STOPPED
+    assert sorc.state_num == StateNum.S_SORC_ATTACK4
+
+
+def test_sorc_offense2_wraps_byte_args(sim: GameSim) -> None:
+    sorc, _target, b1, _b2, _b3 = _spawn_sorcerer(sim)
+    b1.args = (0, 0, 0, 0, 250)
+    a_sorcoffense2(sim, b1)
+    assert b1.args[4] == (250 + 15) & 0xFF
+
+
+def test_sorc_woosh_bumps_rotation_counter(sim: GameSim) -> None:
+    """A full turn at terminal speed bumps args[1]."""
+    sorc, _target, b1, _b2, _b3 = _spawn_sorcerer(sim)
+    sorc.args = (0, 0, 0, SORC_STOPPED, SORCBALL_TERMINAL_SPEED)
+    b1.special1 = 8000  # previous fine angle near the end of a turn
+    sorc.special1 = ANG1
+    a_sorcballorbit(sim, b1)
+    assert sorc.args[1] == 1
+
+
+def test_sorc_boss_attack_resumes_spinning(sim: GameSim) -> None:
+    sorc = spawn_mobj(sim, 0, 0, 0, MobjType.MT_SORCBOSS)
+    a_sorcbossattack(sim, sorc)
+    assert sorc.args[3] == SORC_ACCELERATE
+    assert sorc.args[2] == SORCBALL_INITIAL_SPEED
+
+
+def test_sorc_reinforcement_and_offense_spells(sim: GameSim) -> None:
+    """Green ball spawns FX3 missiles from the sorcerer; yellow fires two FX1."""
+    sorc, _target, b1, _b2, b3 = _spawn_sorcerer(sim)
+    a_castsorcererspell(sim, b3)
     fx3 = _mobjs_of_type(sim, MobjType.MT_SORCFX3)
-    assert len(fx3) == 1
+    assert fx3 and all(m.target is sorc for m in fx3)
+    a_castsorcererspell(sim, b1)
+    fx1 = _mobjs_of_type(sim, MobjType.MT_SORCFX1)
+    assert len(fx1) == 2
+    assert all(m.target is sorc and m.args[3] == 15 for m in fx1)
+    a_sorcfx1seek(sim, fx1[0])
+    a_sorcoffense1(sim, b1)
+    assert len(_mobjs_of_type(sim, MobjType.MT_SORCFX1)) == 4
+
     fx3[0].x = 128 * FRACUNIT
     a_sorcererbishopentry(sim, fx3[0])
     assert len(_mobjs_of_type(sim, MobjType.MT_SORCFX3_EXPLOSION)) == 1
     a_spawnbishop(sim, fx3[0])
-    assert len(_mobjs_of_type(sim, MobjType.MT_BISHOP)) == 1
+    bishops = _mobjs_of_type(sim, MobjType.MT_BISHOP)
+    assert len(bishops) == 1 and bishops[0].target is None
 
-    # Spell 3: Offensive attacks (A_SorcOffense1 & A_SorcOffense2)
-    monkeypatch.setattr(type(sim.rng), "p_random", lambda _self: 64)
-    sorc.args = (0, 0, int(MobjType.MT_SORCBALL3), SORC_STOPPED, 7)
-    a_castsorcererspell(sim, sorc)
-    a_sorcoffense1(sim, sorc)
-    fx1 = _mobjs_of_type(sim, MobjType.MT_SORCFX1)
-    assert len(fx1) == 2
-    a_sorcfx1seek(sim, fx1[0])
 
-    a_sorcoffense2(sim, sorc)
-    fx4 = _mobjs_of_type(sim, MobjType.MT_SORCFX4)
-    assert len(fx4) == 1
-    fx4[0].special2 = 0
-    a_sorcfx4check(sim, fx4[0])
-    assert fx4[0].state_num == fx4[0].info.deathstate
+def test_sorc_fx4_check_countdown(sim: GameSim) -> None:
+    fx4 = spawn_mobj(sim, 0, 0, 0, MobjType.MT_SORCFX4)
+    fx4.special2 = 0
+    a_sorcfx4check(sim, fx4)
+    assert fx4.state_num == fx4.info.deathstate
 
-    # Fizzle, ball pop, and bounce check
-    a_spawnfizzle(sim, sorc)
-    assert len(_mobjs_of_type(sim, MobjType.MT_SORCSPARK1)) == 5
 
-    a_sorcballpop(sim, b1[0])
-    assert b1[0].flags2 & MobjFlag2.MF2_LOGRAV
-    b1[0].args = (0, 0, 0, 0, 0)
-    a_bouncecheck(sim, b1[0])
-    assert b1[0].state_num == b1[0].info.deathstate
+def test_radius_attack_box_is_distance_wide(sim: GameSim) -> None:
+    """Vanilla's (distance + MAXRADIUS) << FRACBITS wraps in int32, so the block box is
+    only `distance` units wide: a thing in range but in an unvisited block is missed."""
+    bm = sim.level.blockmap
+    block = 128 * FRACUNIT
+    # Spot 42 units into block 5, so a 40-unit box stays in block 5 (a 72-unit one would not).
+    spot = spawn_mobj(sim, bm.org_x + 5 * block + 42 * FRACUNIT, 0, 0, MobjType.MT_POISONCLOUD)
+    victim = spawn_mobj(sim, spot.x - 60 * FRACUNIT, 0, 0, MobjType.MT_ETTIN)
+    near = spawn_mobj(sim, spot.x - 10 * FRACUNIT, 0, 0, MobjType.MT_ETTIN)
+    assert (victim.x - bm.org_x) >> 23 == 4  # in range: 60 - radius 25 = 35 < 40
+    radius_attack(sim, spot, None, 4, 40, True)
+    assert victim.health == victim.info.spawnhealth
+    assert near.health == near.info.spawnhealth - 5
+
+
+def test_kill_mobj_keeps_target_and_always_rolls_tics(sim: GameSim) -> None:
+    """P_KillMobj leaves target->target and calls P_Random even if the thing is removed."""
+    killer = spawn_mobj(sim, 256 * FRACUNIT, 0, 0, MobjType.MT_PLAYER_FIGHTER)
+    armor = spawn_mobj(sim, 0, 0, 0, MobjType.MT_ZSUITOFARMOR)
+    armor.target = killer
+    kill_mobj(sim, killer, armor)
+    assert armor.target is killer
+    armor2 = spawn_mobj(sim, 64 * FRACUNIT, 0, 0, MobjType.MT_ZSUITOFARMOR)
+    before = sim.rng.prndindex
+    kill_mobj(sim, None, armor2)
+    # A_SoAExplode: 10 chunks x (3 + spawn + 1 + 2 + 2) calls, then the tics roll.
+    assert armor2.removed
+    assert (sim.rng.prndindex - before) & 0xFF == (10 * 9 + 1) & 0xFF
 
 
 def test_class_bosses_and_weapon_projectiles(sim: GameSim, monkeypatch: pytest.MonkeyPatch) -> None:

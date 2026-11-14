@@ -840,10 +840,47 @@ uses the T15.1 game flow. File bugs as `T15.7.x`. **Milestone M6.**
 
 ### Stretch goals
 - **S1** Vanilla demo sync (built-in `DEMO1..3` playback matching the original).
-- **S2** Multiplayer (coop/deathmatch using lockstep TicCmd exchange).
+- **S2** Multiplayer (coop/deathmatch using lockstep TicCmd exchange). Split into S2a-S2d, detailed below.
 - **S3** Deathkings of the Dark Citadel support and PWAD loading tested.
 - **S4** Mod support (custom MAPINFO/ACS PWADs).
 - **S5** Visual extras (dynamic lights, optional smooth filtering, widescreen status bar).
+
+
+#### S2 — Multiplayer (ADR-013, ACCEPTED)
+
+Split into four tasks, in this order. All tests can run in one process with the loopback
+transport; S2d adds real processes on localhost.
+
+**S2a Multi-player sim rules** (`sim/`): 2-4 players in one sim, each with its own class
+and colour translation; coop starts by player number and deathmatch starts with G_CheckSpot
+/ G_DeathMatchSpawnPlayer (telefrag at the start); coop reborn (G_DoReborn netgame branch:
+respawn at a start, P_SpawnPlayer, items kept as vanilla keeps them); frags and obituary
+messages; deathmatch item rules (weapons stay, MF_NOTDMATCH) and the `-timer` exit;
+`playeringame` and a player leaving (mobj removed). Reference: g_game.c, p_mobj.c
+(P_SpawnPlayer, P_SpawnMapThing), p_inter.c (frags, P_KillMobj), p_user.c, sb_bar.c.
+Accept: tests drive 2-4 players with scripted ticcmd streams in one sim (coop and
+deathmatch) and check spawns, frags, reborn and the timer; the same streams give the same
+state hash twice; DEMO1-3 stay in sync.
+
+**S2b Lockstep netcode** (`pyhexen.net`): transports (UDP, loopback with delay and loss),
+packet formats, server and client loops (redundant ticcmds/tics with acks, lead tics, hello
+and settings, IWAD/version check, timeouts and a player leaving), desync hashes every 35
+tics. Accept: 4 loopback clients with 100 ms delay and 10% loss run 2000 tics and end with
+identical state hashes; a forced desync is reported at the right tic; a wrong IWAD MD5 is
+refused; a client that stops sending is dropped after the timeout and the others go on.
+
+**S2c Game flow and UI for netgames**: GameFlow with a console player and N players (map
+changes carry everyone, coop reborn, deathmatch timer exit, frags/coop intermission), CLI
+`--host [port]`, `--join host[:port]`, `--deathmatch`, `--timer`, `--name`, a lobby screen
+listing players, frags in the status bar, other players on the coop automap, "<name> left"
+messages. Accept: two GameFlows over loopback play MAP01 coop to MAP02 and a deathmatch to
+the timer, rendering headlessly for each console player.
+
+**S2d End-to-end and docs**: launch 2-4 `pyhexen` processes on localhost with scripted
+input (bots from `tools/playthrough.py`) for 5 minutes of coop and of deathmatch over UDP
+with no desync; extend the playthrough harness with a coop mode; README "Multiplayer"
+section (hosting, ports, firewall). Accept: the scripted session passes; a manual LAN game
+is listed in the T15.7b-style checklist for the user.
 
 ---
 

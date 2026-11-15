@@ -191,48 +191,26 @@ def p_spawn_light_sequence(sim: GameSim, sector: Sector, index_step: int = 1) ->
         sec = next_sec
 
 
-def _apply_player_damage(sim: GameSim, player: Player, amount: int) -> None:
-    """Apply environmental floor/sector damage to `player`."""
-    mo = player.mo
-    if mo is None:
-        return
-    player.health -= amount
-    mo.health = player.health
-    player.damagecount += amount
-    start_sound(sim, mo, int(SfxEnum.SFX_LAVA_SIZZLE))
-
-
 def p_player_in_special_sector(sim: GameSim, player: Player) -> None:
-    """Apply special sector and floor effects when `player` is on the floor.
+    """Port of P_PlayerInSpecialSector (p_spec.c).
 
-    Port of P_PlayerInSpecialSector and P_PlayerOnSpecialFlat (p_spec.c).
+    Called only when the player's sector has a special. Wind (40-51) is applied in
+    P_XYMovement, stairs, lightning and sky specials elsewhere; vanilla has no damaging
+    sector specials (lava hurts through the floor's terrain type instead).
     """
     from pyhexen.sim.player import p_thrust
 
     mo = player.mo
     if mo is None or mo.subsector is None:
         return
-
     sector = mo.subsector.sector
     if mo.z != sector.floor_height:
-        return
-
-    # Check lava flat ("X_001") damage from P_PlayerOnSpecialFlat
-    if sector.floor_pic.upper() == "X_001":
-        if not (sim.level_time & 31):
-            _apply_player_damage(sim, player, 10)
+        return  # Player is not touching the floor
 
     special = sector.special
-    if special == 0:
-        return
-
     if special == 9:  # SecretArea
         player.secret_count += 1
         sector.special = 0
-    elif special in (5, 7, 16):  # Damaging sector specials (sludge/lava/hellslime)
-        if not (sim.level_time & 31):
-            dmg = 5 if special == 7 else (10 if special == 5 else 20)
-            _apply_player_damage(sim, player, dmg)
     elif 201 <= special <= 203:  # Scroll_North_xxx
         p_thrust(player, ANG90, PUSH_TAB[special - 201])
     elif 204 <= special <= 206:  # Scroll_East_xxx
@@ -249,14 +227,30 @@ def p_player_in_special_sector(sim: GameSim, player: Player) -> None:
         p_thrust(player, (ANG270 + ANG45) & 0xFFFFFFFF, PUSH_TAB[special - 219])
     elif 222 <= special <= 224:  # Scroll_SouthWest_xxx
         p_thrust(player, (ANG180 + ANG45) & 0xFFFFFFFF, PUSH_TAB[special - 222])
-    elif 40 <= special <= 42:  # Wind_East
-        p_thrust(player, 0, PUSH_TAB[special - 40])
-    elif 43 <= special <= 45:  # Wind_North
-        p_thrust(player, ANG90, PUSH_TAB[special - 43])
-    elif 46 <= special <= 48:  # Wind_South
-        p_thrust(player, ANG270, PUSH_TAB[special - 46])
-    elif 49 <= special <= 51:  # Wind_West
-        p_thrust(player, ANG180, PUSH_TAB[special - 49])
+    # Anything else: vanilla I_Errors on unknown specials; ignored here.
+
+
+def p_player_on_special_flat(sim: GameSim, player: Player, floor_type: int) -> None:
+    """Port of P_PlayerOnSpecialFlat (p_spec.c): lava burns every 32 tics.
+
+    The damage goes through P_DamageMobj with LavaInflictor (MT_CIRCLEFLAME, fire
+    damage, no thrust), so class armour saves part of it and pain chance draws P_Random.
+    """
+    from pyhexen.sim.actions.monsters_common import FLOOR_LAVA
+    from pyhexen.sim.info_data import MobjFlag2, MobjType
+    from pyhexen.sim.inter import damage_mobj
+    from pyhexen.sim.mobj import Mobj
+
+    mo = player.mo
+    if mo is None or mo.z != mo.floorz:
+        return  # Player is not touching the floor
+    if floor_type == FLOOR_LAVA and not (sim.level_time & 31):
+        lava_inflictor = Mobj(
+            type=MobjType.MT_CIRCLEFLAME,
+            flags2=int(MobjFlag2.MF2_FIREDAMAGE | MobjFlag2.MF2_NODMGTHRUST),
+        )
+        damage_mobj(sim, mo, lava_inflictor, None, 10)
+        start_sound(sim, mo, int(SfxEnum.SFX_LAVA_SIZZLE))
 
 
 def p_spawn_specials(sim: GameSim) -> None:

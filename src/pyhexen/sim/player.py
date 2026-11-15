@@ -52,7 +52,10 @@ from pyhexen.sim.psprites import (
     p_move_psprites,
     p_setup_psprites,
 )
-from pyhexen.sim.specials.sector_specials import p_player_in_special_sector
+from pyhexen.sim.specials.sector_specials import (
+    p_player_in_special_sector,
+    p_player_on_special_flat,
+)
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
@@ -587,10 +590,13 @@ def p_player_think(sim: GameSim, player: Player) -> None:
 
     p_calc_height(sim, player)
 
-    if mo.subsector is not None and (
-        mo.subsector.sector.special or mo.subsector.sector.floor_pic.upper() == "X_001"
-    ):
+    if mo.subsector is not None and mo.subsector.sector.special:
         p_player_in_special_sector(sim, player)
+    from pyhexen.sim.actions.monsters_common import FLOOR_SOLID, get_thing_floor_type
+
+    floor_type = get_thing_floor_type(mo)
+    if floor_type != FLOOR_SOLID:
+        p_player_on_special_flat(sim, player, floor_type)
 
     if cmd.buttons & BT_SPECIAL:
         cmd.buttons = 0

@@ -171,7 +171,7 @@ class NetServer:
         if msg.version != PROTOCOL_VERSION:
             reason = f"protocol version {msg.version}, the host has {PROTOCOL_VERSION}"
         elif msg.iwad_md5 != self.iwad_md5:
-            reason = "different IWAD (MD5 does not match the host's)"
+            reason = "different IWAD or PWADs (MD5 does not match the host's)"
         elif self.started:
             reason = "the game has already started"
         elif len(self.peers) >= self.max_players:

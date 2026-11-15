@@ -13,7 +13,7 @@ complete tic through `GameFlow.tick`, so all nodes run the same tics.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,12 +31,16 @@ DEFAULT_PORT = 2342  # Chocolate Doom's port
 CLASS_NAMES = ("FIGHTER", "CLERIC", "MAGE")
 
 
-def iwad_md5(path: Path | str) -> bytes:
-    """MD5 of the IWAD file (every node must use the same one)."""
+def iwad_md5(path: Path | str, pwads: Sequence[Path | str] = ()) -> bytes:
+    """MD5 of the IWAD followed by any PWADs (every node must load the same files).
+
+    With no PWADs this is the IWAD's own MD5, as before.
+    """
     digest = hashlib.md5()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
+    for file in (path, *pwads):
+        with open(file, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
     return digest.digest()
 
 

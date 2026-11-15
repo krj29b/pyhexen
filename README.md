@@ -162,6 +162,24 @@ After `uv sync`, `uv run pyhexen ...` works as well.
 
 If the game crashes, the traceback goes to `crash.log` in the working directory.
 
+### Deathkings of the Dark Citadel
+
+The expansion is a WAD of its own, `HEXDD.WAD`, loaded on top of `HEXEN.WAD`:
+
+```sh
+uv run python -m pyhexen --iwad HEXEN.WAD --file HEXDD.WAD             # title, then New Game
+uv run python -m pyhexen --iwad HEXEN.WAD --file HEXDD.WAD --warp MAP41
+```
+
+Its MAPINFO replaces the original one, so New Game starts on MAP41 (Ruined Village), and
+the three hubs run MAP41–MAP60; MAP33–MAP38 are its deathmatch maps. The title screen,
+cluster texts and ending text come from `HEXDD.WAD` as well, and `--playdemo DEMO1`
+plays its demos (the title loop does not play demos yet). Music
+comes from the IWAD's SNDINFO: the v1.0 `HEXEN.WAD` has no entries for MAP41–MAP60, so
+those maps play without music there, as they did in the original. Saves, recorded demos
+and netgames include the PWADs in their checksum, so a Deathkings save only loads with
+`HEXDD.WAD`, and every netgame player needs the same files.
+
 ## Controls
 
 These are the defaults. Mouse sensitivity and inversion are set in `config.toml`.
@@ -306,7 +324,14 @@ uv run python -m pyhexen.tools.demo_sync --iwad HEXEN.WAD
 # Drill into one tic: record full object dumps there, then diff them
 uv run python tools/demo_trace/record_traces.py --iwad HEXEN.WAD --dump 420 DEMO1
 uv run python -m pyhexen.tools.demo_sync --iwad HEXEN.WAD --dump 420 DEMO1
+
+# Deathkings demos (traces go to out/demo_traces/hexdd/)
+uv run python tools/demo_trace/record_traces.py --iwad HEXEN.WAD --file HEXDD.WAD
+uv run python -m pyhexen.tools.demo_sync --iwad HEXEN.WAD --file HEXDD.WAD
 ```
+
+Deathkings' demos were recorded with Hexen v1.1, whose demo header has 8 player slots
+(v1.0 has 4); PyHexen tells the two apart from the lump length.
 
 Traces are derived from the IWAD, so they stay in the gitignored `out/demo_traces/`. The
 known divergences are tracked as tasks T15.6a–c in [docs/PROGRESS.md](docs/PROGRESS.md).

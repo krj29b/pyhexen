@@ -106,6 +106,8 @@ class VanillaDemoHeader:
     respawn: bool = False
     nomonsters: bool = False
     players: list[tuple[bool, int]] = field(default_factory=list)  # (in_game, player_class)
+    # Player slots in the header: 4 for Hexen v1.0, 8 (MAXPLAYERS) for v1.1 and Deathkings.
+    slots: int = 4
 
 
 @dataclass(slots=True)
@@ -116,15 +118,55 @@ class VanillaDemo:
     tics: list[tuple[TicCmd, ...]] = field(default_factory=list)
 
 
-def decode_vanilla_demo(data: bytes | bytearray | memoryview) -> VanillaDemo:
+VANILLA_DEMO_SLOTS: tuple[int, ...] = (4, 8)
+
+
+def detect_demo_slots(data: bytes | bytearray | memoryview) -> int:
+    """Return how many player slots a vanilla demo header has (4 or 8).
+
+    The header is 3 bytes plus 2 per slot (G_RecordDemo writes `maxplayers` slots). Hexen
+    v1.0 had 4 slots; v1.1 and Deathkings have MAXPLAYERS = 8. The lump does not say
+    which, so the slot count whose tic stream fills the lump exactly up to the closing
+    DEMOMARKER wins. The two layouts differ by 8 bytes, which is never a whole number of
+    ticcmds (6 or 7 bytes per player), so at most one fits. A demo that fits neither
+    (truncated, or with junk after the marker) is read as v1.0.
+    """
+    buf = memoryview(data)
+    if len(buf) == 0 or buf[-1] != DEMOMARKER:
+        return 4
+    longtics = bool(buf[3] & DEMOHEADER_LONGTICS) if len(buf) > 3 else False
+    fits: list[int] = []
+    for slots in VANILLA_DEMO_SLOTS:
+        header_len = 3 + 2 * slots
+        if len(buf) < header_len + 1:
+            continue
+        in_game = [bool(buf[3] & 1)] + [bool(buf[3 + 2 * i]) for i in range(1, slots)]
+        tic_size = (7 if longtics else 6) * max(1, sum(in_game))
+        if (len(buf) - 1 - header_len) % tic_size == 0:
+            fits.append(slots)
+    return fits[0] if len(fits) == 1 else 4
+
+
+def decode_vanilla_demo(
+    data: bytes | bytearray | memoryview, slots: int | None = None
+) -> VanillaDemo:
     """Parse a vanilla Hexen 1995 demo lump (e.g. DEMO1..3) or file.
 
-    Port of G_TimeDemo / G_ReadDemoTiccmd (g_game.c:1963-2280).
+    Port of G_TimeDemo / G_ReadDemoTiccmd (g_game.c:1963-2280). `slots` is the number
+    of player slots in the header (4 for v1.0, 8 for v1.1/Deathkings); by default it is
+    detected from the lump length (`detect_demo_slots`).
     """
     buf = memoryview(data)
     total_len = len(buf)
     if total_len < 12:
         raise DemoError(f"Vanilla demo data too short: {total_len} bytes (minimum 12)")
+    if slots is None:
+        slots = detect_demo_slots(buf)
+    if slots not in VANILLA_DEMO_SLOTS:
+        raise DemoError(f"Unsupported vanilla demo player slot count: {slots}")
+    header_len = 3 + 2 * slots
+    if total_len < header_len + 1:
+        raise DemoError(f"Vanilla demo data too short for {slots} player slots")
 
     skill = int(buf[0])
     episode = int(buf[1])
@@ -138,7 +180,7 @@ def decode_vanilla_demo(data: bytes | bytearray | memoryview) -> VanillaDemo:
     p0_class = int(buf[4])
 
     players: list[tuple[bool, int]] = [(p0_ingame, p0_class)]
-    for i in range(1, 4):
+    for i in range(1, slots):
         offset = 3 + i * 2
         in_game = bool(buf[offset])
         pclass = int(buf[offset + 1])
@@ -152,10 +194,11 @@ def decode_vanilla_demo(data: bytes | bytearray | memoryview) -> VanillaDemo:
         respawn=respawn,
         nomonsters=nomonsters,
         players=players,
+        slots=slots,
     )
 
     active_players = max(1, len([p for p in players if p[0]]))
-    offset = 11
+    offset = header_len
     tics: list[tuple[TicCmd, ...]] = []
 
     while offset < total_len:
@@ -225,7 +268,7 @@ def encode_vanilla_demo(vdemo: VanillaDemo) -> bytes:
     p0_class = vdemo.header.players[0][1] if vdemo.header.players else 0
     out.append(p0_class & 0xFF)
 
-    for i in range(1, 4):
+    for i in range(1, vdemo.header.slots):
         if i < len(vdemo.header.players):
             in_g, pcls = vdemo.header.players[i]
             out.append(1 if in_g else 0)

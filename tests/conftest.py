@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -32,3 +33,18 @@ def iwad_path(request: pytest.FixtureRequest) -> Path:
     if resolved is None:
         pytest.skip("No HEXEN.WAD configured (set --iwad, PYHEXEN_IWAD, or iwad in config.toml)")
     return resolved
+
+
+@pytest.fixture(scope="session")
+def hexdd_path(iwad_path: Path) -> Path:
+    """The Deathkings PWAD (HEXDD.WAD): PYHEXEN_HEXDD, or next to the IWAD (S3).
+
+    Skips the test cleanly if it isn't there.
+    """
+    env = os.environ.get("PYHEXEN_HEXDD")
+    candidates = [Path(env)] if env else []
+    candidates += [p for p in iwad_path.parent.iterdir() if p.name.lower() == "hexdd.wad"]
+    for path in candidates:
+        if path.is_file():
+            return path
+    pytest.skip("No HEXDD.WAD (set PYHEXEN_HEXDD or put it next to the IWAD)")

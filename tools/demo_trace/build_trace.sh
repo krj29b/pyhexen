@@ -6,13 +6,16 @@
 # Runs inside the trace container (T15.6). Mounts:
 #   /ref  Chocolate Doom source (reference/), read-only
 #   /wad  directory holding the IWAD, read-only (IWAD file name in $IWAD_NAME)
+#   /pwad directory holding an optional PWAD such as HEXDD.WAD (file name in $PWAD_NAME)
 #   /out  trace output directory (also caches the build in /out/.build)
 # Arguments: demo lump names (default DEMO1 DEMO2 DEMO3).
 # PYHEXEN_TRACE_DUMP (comma-separated leveltimes) is passed through to the hook.
+# PYHEXEN_MAXPLAYERS (4 or 8) overrides the demo header's player slot count.
 set -eu
 SRC=/out/.build/src
 BIN=/out/.build/bin
-if [ ! -x "$BIN/src/chocolate-hexen" ] || [ /tools/pyh_trace.c -nt "$BIN/src/chocolate-hexen" ]; then
+if [ ! -x "$BIN/src/chocolate-hexen" ] || [ /tools/pyh_trace.c -nt "$BIN/src/chocolate-hexen" ] \
+    || [ /tools/build_trace.sh -nt "$BIN/src/chocolate-hexen" ]; then
     rm -rf "$SRC"
     mkdir -p "$SRC" "$BIN"
     cp -r /ref/. "$SRC"
@@ -27,7 +30,9 @@ if [ ! -x "$BIN/src/chocolate-hexen" ] || [ /tools/pyh_trace.c -nt "$BIN/src/cho
     cat /tools/pyh_trace.c >> "$TICK"
     # Hexen v1.0 had 4 player slots (its demo headers are 3 + 4*2 bytes); v1.1 raised
     # MAXPLAYERS to 8. Chocolate only knows v1.1, so with the v1.0 IWAD it would read
-    # tic bytes as extra players. Use 4 slots when the IWAD is v1.0.
+    # tic bytes as extra players. Use 4 slots when the IWAD is v1.0. Deathkings demos
+    # were recorded with v1.1 (8 slots) even when played on a v1.0 IWAD, so the slot
+    # count can be forced with PYHEXEN_MAXPLAYERS (record_traces.py reads the demos).
     MAIN="$SRC/src/hexen/h2_main.c"
     grep -q '// The v1.0 IWAD file is missing' "$MAIN"
     sed -i '/\/\/ The v1.0 IWAD file is missing/i\
@@ -35,7 +40,12 @@ if [ ! -x "$BIN/src/chocolate-hexen" ] || [ /tools/pyh_trace.c -nt "$BIN/src/cho
     {\
         maxplayers = 4;\
     }\
+    if (getenv("PYHEXEN_MAXPLAYERS") != NULL)\
+    {\
+        maxplayers = atoi(getenv("PYHEXEN_MAXPLAYERS"));\
+    }\
 ' "$MAIN"
+    grep -q 'PYHEXEN_MAXPLAYERS' "$MAIN"
     grep -q 'W_CheckNumForName("CLUS1MSG") < 0)$' "$MAIN"
     cmake -S "$SRC" -B "$BIN" -G Ninja -DCMAKE_BUILD_TYPE=Release >/out/.build/cmake.log
     ninja -C "$BIN" chocolate-hexen >/out/.build/ninja.log
@@ -46,6 +56,9 @@ fi
 EXTRA_ARGS=""
 if ! grep -q CLUS1MSG "/wad/$IWAD_NAME"; then
     EXTRA_ARGS="-v10override"
+fi
+if [ -n "${PWAD_NAME:-}" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS -file /pwad/$PWAD_NAME"
 fi
 export SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software HOME=/tmp
 for demo in "$@"; do

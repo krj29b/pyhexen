@@ -281,7 +281,7 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
     camera = Camera()
     saves: SaveGameManager | None = None
     if not is_headless:
-        saves = SaveGameManager("saves", iwad_checksum=compute_wad_checksum(iwad_path))
+        saves = SaveGameManager("saves", iwad_checksum=compute_wad_checksum(stack))
     flow = GameFlow(stack, map_table, saves=saves)
     game_ui: GameUI | None = None
     demo_recorder: DemoRecorder | None = None
@@ -323,14 +323,14 @@ def _run_game(args: argparse.Namespace, iwad_path: Path) -> int:
             pygame.display.set_caption(f"PyHexen - {sim.level.name}")
         if args.record and demo_recorder is None:
             demo_recorder = DemoRecorder(
-                sim, file_path=args.record, iwad_checksum=compute_wad_checksum(iwad_path)
+                sim, file_path=args.record, iwad_checksum=compute_wad_checksum(stack)
             )
 
     flow.on_level_loaded = on_level_loaded
 
     net: NetGameDriver | None = None
     if args.host is not None or args.join:
-        md5 = iwad_md5(iwad_path)
+        md5 = iwad_md5(iwad_path, args.file or ())
         if args.host is not None:
             start_map = warp_map or map_table.translate_warp(1)
             net = NetGameDriver.host(

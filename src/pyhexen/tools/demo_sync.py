@@ -10,6 +10,9 @@ live in the gitignored `out/demo_traces/` and are never committed.
 
     uv run python -m pyhexen.tools.demo_sync --iwad HEXEN.WAD DEMO1 DEMO2 DEMO3
     uv run python -m pyhexen.tools.demo_sync --iwad HEXEN.WAD DEMO1 --dump 120
+    uv run python -m pyhexen.tools.demo_sync --iwad HEXEN.WAD --file HEXDD.WAD
+
+With `--file` the traces are read from `out/demo_traces/<pwad name>/` by default.
 """
 
 from __future__ import annotations
@@ -116,7 +119,8 @@ def _print_dump_diff(ref: list[MobjDump], ours: list[MobjDump], limit: int = 40)
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--iwad", required=True, type=Path)
-    parser.add_argument("--traces", type=Path, default=DEFAULT_TRACE_DIR)
+    parser.add_argument("--file", type=Path, action="append", default=[], help="PWAD(s)")
+    parser.add_argument("--traces", type=Path, default=None)
     parser.add_argument(
         "--dump",
         type=int,
@@ -129,6 +133,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     stack = WadStack(args.iwad)
+    for pwad in args.file:
+        stack.add_wad(pwad)
+    if args.traces is None:
+        args.traces = DEFAULT_TRACE_DIR
+        if args.file:
+            args.traces = args.traces / args.file[-1].stem.lower()
     mapinfo = load_mapinfo(stack)
     all_ok = True
     for lump in args.demos:

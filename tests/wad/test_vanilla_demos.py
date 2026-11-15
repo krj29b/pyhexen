@@ -108,3 +108,47 @@ def test_vanilla_demo_sync_against_chocolate_hexen(iwad_path: Path, lump: str) -
     synced = ref_tics if div is None else div.index
     if md5 == HEXEN_V10_MD5:
         assert synced >= SYNCED_TICS_V10[lump], div.describe() if div else ""
+
+
+# --- Deathkings (S3a) -------------------------------------------------------------------
+# HEXDD.WAD's DEMO1-3 were recorded with Hexen v1.1 (8 player slots). Traces come from
+# `record_traces.py --file HEXDD.WAD` into out/demo_traces/hexdd/.
+DK_TRACE_DIR = TRACE_DIR / "hexdd"
+DK_DEMOS = {"DEMO1": (41, 0, 3953), "DEMO2": (50, 2, 2888), "DEMO3": (55, 1, 2924)}
+# Tics in sync on the v1.0 IWAD as of S3a; DEMO2 and DEMO3 divergences are S3c and S3d.
+SYNCED_TICS_DK_V10 = {"DEMO1": 3953, "DEMO2": 396, "DEMO3": 2406}
+
+
+@pytest.mark.wad
+def test_deathkings_demo_lumps(iwad_path: Path, hexdd_path: Path) -> None:
+    with WadStack([iwad_path, hexdd_path]) as stack:
+        for lump, (map_num, pclass, tics) in DK_DEMOS.items():
+            demo = decode_vanilla_demo(stack.get_bytes(lump))
+            assert demo.header.slots == 8
+            assert demo.header.map_num == map_num
+            assert demo.header.players[0] == (True, pclass)
+            assert not any(in_game for in_game, _ in demo.header.players[1:])
+            assert len(demo.tics) == tics
+
+
+@pytest.mark.wad
+@pytest.mark.parametrize("lump", list(DK_DEMOS))
+def test_deathkings_demo_sync_against_chocolate_hexen(
+    iwad_path: Path, hexdd_path: Path, lump: str
+) -> None:
+    source = DK_TRACE_DIR / "source.json"
+    if not (DK_TRACE_DIR / f"{lump}.trace").is_file() or not source.is_file():
+        pytest.skip("no Deathkings traces (record_traces.py --file HEXDD.WAD)")
+    recorded = json.loads(source.read_text(encoding="ascii"))
+    iwad_md5 = hashlib.md5(iwad_path.read_bytes()).hexdigest()
+    if (
+        recorded.get("iwad_md5") != iwad_md5
+        or recorded.get("pwad_md5") != hashlib.md5(hexdd_path.read_bytes()).hexdigest()
+    ):
+        pytest.skip("Deathkings traces were recorded from different WADs")
+    with WadStack([iwad_path, hexdd_path]) as stack:
+        ref_tics, div = compare_demo(stack, load_mapinfo(stack), lump, DK_TRACE_DIR)
+    assert ref_tics == DK_DEMOS[lump][2]
+    synced = ref_tics if div is None else div.index
+    if iwad_md5 == HEXEN_V10_MD5:
+        assert synced >= SYNCED_TICS_DK_V10[lump], div.describe() if div else ""

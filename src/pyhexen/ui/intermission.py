@@ -381,6 +381,22 @@ class Finale:
         self._patches[name_upper] = pic
         return pic
 
+    def finale_text(self, sequence: int) -> str:
+        """Text for finale stage `sequence` (0..2). Port of GetFinaleText (f_finale.c).
+
+        Reads WIN1MSG..WIN3MSG, so Deathkings (HEXDD.WAD) shows its own ending. The v1.0
+        IWAD has no such lumps; then the built-in texts are used (and, for the last
+        stage, a per-class text).
+        """
+        if self.wad is not None:
+            name = f"WIN{sequence + 1}MSG"
+            if self.wad.find(name) is not None:
+                text = self.wad.get_bytes(name).decode("ascii", errors="ignore")
+                return text.replace("\r\n", "\n").split("\0", 1)[0]
+        if sequence == 2:
+            return CLASS_FINALE_TEXTS.get(self.player_class, DEFAULT_WIN_MESSAGES.get(2, ""))
+        return DEFAULT_WIN_MESSAGES[sequence]
+
     def start(self, player_class: int = 0, *, is_netgame: bool = False) -> None:
         """Start the finale sequence (F_StartFinale)."""
         self.active = True
@@ -390,7 +406,7 @@ class Finale:
         self.stage_count = 0
         self.stage_end_count = FADE_TICS
         self.fade_alpha = 0.0
-        self.current_text = DEFAULT_WIN_MESSAGES[0]
+        self.current_text = self.finale_text(0)
 
         if self.on_music is not None:
             self.on_music("hall")
@@ -431,11 +447,11 @@ class Finale:
         self.stage = FinaleStage(next_stage_val)
 
         if self.stage == FinaleStage.STAGE_1_TEXT1:
-            self.current_text = DEFAULT_WIN_MESSAGES[0]
+            self.current_text = self.finale_text(0)
             self.stage_end_count = len(self.current_text) * TEXTSPEED + TEXTWAIT_FINALE
 
         elif self.stage == FinaleStage.STAGE_2_PIC2_TEXT2:
-            self.current_text = DEFAULT_WIN_MESSAGES[1]
+            self.current_text = self.finale_text(1)
             self.stage_end_count = len(self.current_text) * TEXTSPEED + TEXTWAIT_FINALE
             if self.on_music is not None:
                 self.on_music("orb")
@@ -449,9 +465,7 @@ class Finale:
                 self.on_music("chess")
 
         elif self.stage == FinaleStage.STAGE_5_TEXT3_EPILOGUE:
-            self.current_text = CLASS_FINALE_TEXTS.get(
-                self.player_class, DEFAULT_WIN_MESSAGES.get(2, "")
-            )
+            self.current_text = self.finale_text(2)
             self.stage_end_count = len(self.current_text) * TEXTSPEED + TEXTWAIT_FINALE * 2
 
     def handle_key(self, key: int) -> bool:

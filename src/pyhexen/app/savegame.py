@@ -14,17 +14,17 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyhexen.sim.hub import HubManager
+from pyhexen.wad.wadfile import WadStack
 
 if TYPE_CHECKING:
     from pyhexen.sim.game_sim import GameSim
-    from pyhexen.wad.wadfile import WadStack
     from pyhexen.world.level import Level
 
 SAVE_MAGIC: str = "PYHEXEN_SAVE"
@@ -45,29 +45,37 @@ class SaveChecksumError(SaveError):
     """Raised when IWAD checksum validation fails."""
 
 
-def compute_wad_checksum(target: Path | bytes | WadStack) -> str:
+def compute_wad_checksum(target: Path | bytes | WadStack | Sequence[Path]) -> str:
     """Compute deterministic SHA-256 hex digest for IWAD verification.
 
-    Accepts a Path, raw bytes, or a WadStack instance.
+    Accepts a Path, raw bytes, a WadStack, or a sequence of paths (IWAD then PWADs). Every
+    file is hashed in load order, so a save made with Deathkings (HEXDD.WAD) does not load
+    without it; an IWAD alone gives the same digest as before PWADs were counted.
     """
     hasher = hashlib.sha256()
 
-    if isinstance(target, Path):
-        with open(target, "rb") as f:
+    def hash_file(path: Path | str) -> None:
+        with open(path, "rb") as f:
             while chunk := f.read(65536):
                 hasher.update(chunk)
+
+    if isinstance(target, Path):
+        hash_file(target)
     elif isinstance(target, (bytes, bytearray)):
         hasher.update(target)
-    else:
-        # WadStack instance
-        if target.files and target.files[0].path is not None:
-            with open(target.files[0].path, "rb") as f:
-                while chunk := f.read(65536):
-                    hasher.update(chunk)
+    elif isinstance(target, WadStack):
+        paths = [w.path for w in target.wads]
+        if paths and all(p is not None for p in paths):
+            for p in paths:
+                assert p is not None
+                hash_file(p)
         else:
-            # Hash lumps directory names and offsets
+            # In-memory WADs: hash the lump directory (names and sizes).
             summary = ",".join(f"{lump.name}:{lump.size}" for lump in target.lumps)
             hasher.update(summary.encode("utf-8"))
+    else:
+        for p in target:
+            hash_file(p)
 
     return hasher.hexdigest()
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from pyhexen.core.angles import ANGLETOFINESHIFT, fine_cosine, fine_sine
 from pyhexen.core.fixed import FRACBITS, FRACUNIT
-from pyhexen.sim.info_data import MobjFlag, MobjFlag2, MobjType, SfxEnum
+from pyhexen.sim.info_data import MobjFlag, SfxEnum
 from pyhexen.sim.maputl import (
     PT_ADDLINES,
     Intercept,
@@ -79,30 +79,21 @@ def p_activate_line(
 ) -> bool:
     """Attempt to activate `line` with `activation_type` (`SPAC_*`).
 
-    Port of P_ActivateLine (p_spec.c).
+    Port of P_ActivateLine (p_spec.c). Only a player (`mo.player`) or a missile may
+    activate anything but SPAC_MCROSS lines, so monsters with MF2_PUSHWALL or MF2_IMPACT
+    never trigger push or impact lines, and a monster's P_Move only opens MCROSS doors.
+    Like vanilla, it returns True once the activation checks pass, whether or not the
+    special did anything (P_Move counts that as a successful step).
     """
-    if line.special == 0:
-        return False
-
     line_activation = GET_SPAC(line.flags)
     if line_activation != activation_type:
         return False
 
-    if mo is not None:
-        is_player = mo.player is not None or mo.type in (
-            MobjType.MT_PLAYER_FIGHTER,
-            MobjType.MT_PLAYER_CLERIC,
-            MobjType.MT_PLAYER_MAGE,
-            MobjType.MT_PIGPLAYER,
-        )
-        is_missile_or_impact = bool(mo.flags & MobjFlag.MF_MISSILE) or bool(
-            mo.flags2 & (MobjFlag2.MF2_PCROSS | MobjFlag2.MF2_IMPACT | MobjFlag2.MF2_PUSHWALL)
-        )
-        if not is_player and not is_missile_or_impact:
-            if line_activation != SPAC_MCROSS:
-                return False
-            if line.flags & ML_SECRET:
-                return False
+    if mo is not None and mo.player is None and not (mo.flags & MobjFlag.MF_MISSILE):
+        if line_activation != SPAC_MCROSS:
+            return False  # currently, monsters can only activate the MCROSS activation type
+        if line.flags & ML_SECRET:
+            return False  # never open secret doors
 
     repeat = bool(line.flags & ML_REPEAT_SPECIAL)
     button_success = execute_line_special(sim, line.special, line.args, line, mo, side=side)
@@ -110,10 +101,10 @@ def p_activate_line(
     if not repeat and button_success:
         line.special = 0
 
-    if line_activation in (SPAC_USE, SPAC_IMPACT, SPAC_PUSH) and button_success:
+    if line_activation in (SPAC_USE, SPAC_IMPACT) and button_success:
         p_change_switch_texture(sim, line, repeat)
 
-    return button_success
+    return True
 
 
 def p_use_lines(sim: GameSim, player: Player) -> bool:

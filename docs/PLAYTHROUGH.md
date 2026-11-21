@@ -17,9 +17,10 @@ hubs driven through `HubManager` directly) is gone; this replaces it.
 
 ```powershell
 uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --render     # everything, ~7 min
+uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --file HEXDD.WAD --render  # Deathkings, ~10 min
 uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --only exits --maps 2,3
 uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --only soak --classes 2 --soak-seconds 120
-uv run pytest -m wad tests/wad/test_playthrough_iwad.py   # exits + hubs + reborn, ~30 s
+uv run pytest -m wad tests/wad/test_playthrough_iwad.py   # exits + hubs + reborn (base + Deathkings)
 ```
 
 The exit code is 1 if any check fails. `WARN` lines are explained in section 3.
@@ -106,6 +107,60 @@ moves. Loaded games do not continue with the saved RNG index (see save/load abov
 weapon pieces, polyobject doors that need a puzzle, intermission text, the finale screens,
 music and sound, what frames look like (frames are drawn, not judged), menus, and the
 deathmatch map with more than one player.
+
+### 3b. Deathkings of the Dark Citadel (`HEXDD.WAD`, S3b, 2026-11-21)
+
+**174 checks: 165 pass, 9 warn, 0 fail** (622 s with `--render`, v1.0 `HEXEN.WAD` + `HEXDD.WAD`).
+
+| Map | Name | Cluster | Exit lines (pass / warn) | ACS exits | Fighter | Cleric | Mage |
+|---|---|---|---|---|---|---|---|
+| MAP33 | Transit (deathmatch) | 4 | none | 1 unconfirmed (arg-driven) | PASS | PASS | PASS |
+| MAP34 | Over N Under (deathmatch) | 4 | none | 1 ok (to 33) | PASS | PASS | PASS |
+| MAP35 | Deathfog (deathmatch) | 4 | none | 1 ok (to 33) | PASS | PASS | PASS |
+| MAP36 | Castle of Pain (deathmatch) | 4 | none | 1 ok (to 33) | PASS | PASS | PASS |
+| MAP37 | Sewer Pit (deathmatch) | 4 | none | 1 ok (to 33) | PASS | PASS | PASS |
+| MAP38 | The Rose (deathmatch) | 4 | none | 1 ok (to 33) | PASS | PASS | PASS |
+| MAP41 | Ruined Village | 1 | 5 to 42, 47 (5 / 0) | - | PASS | PASS | PASS |
+| MAP42 | Blight | 1 | 8 to 43, 44, 45, 46 (8 / 0) | 2 ok (to 41) | PASS | PASS | PASS |
+| MAP43 | Sump | 1 | 6 to 42, 44, 46 (6 / 0) | - | PASS | PASS | PASS |
+| MAP44 | Catacomb | 1 | 6 to 42, 43, 45 (6 / 0) | - | PASS | PASS | PASS |
+| MAP45 | Badlands | 1 | 6 to 42, 44, 46 (6 / 0) | - | PASS | PASS | PASS |
+| MAP46 | Brackenwood | 1 | 6 to 42, 43, 45 (4 / 2) | - | PASS | PASS | PASS |
+| MAP47 | Pyre | 1 | 1 to 41 (0 / 1) | - | PASS | PASS | PASS |
+| MAP48 | Constable's Gate | 2 | 5 to 49, 50, 51, 52 (3 / 2) | 1 ok (to 54) | PASS | PASS | PASS |
+| MAP49 | Treasury | 2 | 3 to 48, 53 (3 / 0) | - | PASS | PASS | PASS |
+| MAP50 | Market Place | 2 | 1 to 48 (1 / 0) | - | PASS | PASS | PASS |
+| MAP51 | Locus Requiescat | 2 | 2 to 48 (2 / 0) | - | PASS | PASS | PASS |
+| MAP52 | Ordeal | 2 | 4 to 48, 49 (3 / 1) | - | PASS | PASS | PASS |
+| MAP53 | Armory | 2 | 2 to 49 (2 / 0) | - | PASS | PASS | PASS |
+| MAP54 | Nave | 3 | 12 to 55, 56, 57, 58, 59, 60 (12 / 0) | - | PASS | PASS | PASS |
+| MAP55 | Chantry | 3 | none | 1 ok (to 54) | PASS | PASS | PASS |
+| MAP56 | Abattoir | 3 | 3 to 54, 57 (3 / 0) | - | PASS | PASS | PASS |
+| MAP57 | Dark Watch | 3 | 3 to 54, 58 (3 / 0) | - | PASS | PASS | PASS |
+| MAP58 | Cloaca | 3 | 1 to 55 (1 / 0) | 1 ok (to 54) | PASS | PASS | PASS |
+| MAP59 | Ice Hold | 3 | 2 to 54 (2 / 0) | - | PASS | PASS | PASS |
+| MAP60 | Dark Citadel | 3 | 1 to end (1 / 0) | 1 unconfirmed (DM-only) | PASS | PASS | PASS |
+
+Hub returns: `MAP48 -> 50 -> 48` and `MAP54 -> 56 -> 54` pass; `MAP41 -> 47 -> 41` passes
+with a `WARN` (MAP47 line 1524 is blocked by a Bishop). Cluster change `MAP48 -> MAP54`
+(via ACS script 13) passes and strips all keys. Reborn (leaving warp 1 = `MAP41` to `MAP42`)
+passes for all three classes. `MAP83` ("TEST") is in `MAPINFO` without lumps in `HEXDD.WAD`
+and is skipped automatically.
+
+**Why the 9 warnings are not bugs:**
+* `MAP46` lines 1435 & 1436 (Brackenwood -> Badlands): flagged `0x1204` (`SPAC_PUSH`) on a
+  non-blocking two-sided archway in `HEXDD.WAD` itself, so vanilla Hexen does not trigger
+  them by walking through either. Direct activation with `SPAC_PUSH` verifies they still
+  lead to `MAP45` start 1.
+* `MAP47` line 1524 (and hub return `MAP41 -> 47 -> 41`): blocked by a Dark Bishop (`MT_BISHOP`).
+* `MAP48` line 880: blocked by a Chaos Serpent (`MT_DEMON`); line 881 beside it walks cleanly.
+* `MAP48` line 1484: behind a closed door / lowered ceiling opened by the hub puzzle.
+* `MAP52` line 1204: blocked by a statue (`MT_MISC50`); line 1205 beside it walks cleanly.
+* `MAP33` script 1: deathmatch transit hub selector taking `arg0` in `1..5` (defaults to
+  no-op when called with `0`; bots walked into the real switches during soak and transitioned
+  to `MAP34`, `MAP35`, and `MAP37`).
+* `MAP60` script 5: checks `GameType() == GAME_NET_DEATHMATCH` before calling
+  `Teleport_NewMap(41, 0)`, so it rightly does nothing in single player.
 
 ## 4. Manual checklist (T15.7b)
 

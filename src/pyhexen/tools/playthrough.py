@@ -23,6 +23,7 @@ with player input given as ticcmds, instead of calling the hub manager directly:
 * **reborn**: die after a map change, press use, and check the reborn slot reloads.
 
     uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD
+    uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --file HEXDD.WAD --render
     uv run python -m pyhexen.tools.playthrough --iwad HEXEN.WAD --only exits --maps 1,2
 """
 
@@ -64,9 +65,17 @@ from pyhexen.sim.player import CF_GODMODE, PlayerState
 from pyhexen.sim.sight import check_sight
 from pyhexen.wad.mapinfo import MapInfoTable, load_mapinfo
 from pyhexen.wad.wadfile import WadFile, WadStack
-from pyhexen.world.level import SPAC_CROSS, Line
+from pyhexen.world.level import GET_SPAC, SPAC_CROSS, Line
 
 CLASS_NAMES: tuple[str, ...] = ("Fighter", "Cleric", "Mage")
+SPAC_NAMES: dict[int, str] = {
+    0: "SPAC_CROSS",
+    1: "SPAC_USE",
+    2: "SPAC_MCROSS",
+    3: "SPAC_IMPACT",
+    4: "SPAC_PUSH",
+    5: "SPAC_PCROSS",
+}
 EXIT_SPECIALS: dict[int, str] = {
     74: "Teleport_NewMap",
     75: "Teleport_EndGame",
@@ -298,10 +307,16 @@ class Playthrough:
                     return True, "walked"
                 if flow.state != GameState.LEVEL:
                     return True, "walked"
-        # Could not reach or cross it on foot: activate it the way crossing would.
+        # Could not reach or cross it on foot: activate it directly using its SPAC mode.
         mo = self.player_mo(flow)
-        why = "no free spot in front of it" if not placed else _blocked_reason(sim, mo)
-        p_activate_line(sim, line, mo, 0, SPAC_CROSS)
+        spac = GET_SPAC(line.flags)
+        if spac != SPAC_CROSS:
+            why = f"line uses {SPAC_NAMES.get(spac, f'SPAC {spac}')}, not SPAC_CROSS"
+        elif not placed:
+            why = "no free spot in front of it"
+        else:
+            why = _blocked_reason(sim, mo)
+        p_activate_line(sim, line, mo, 0, spac)
         events = flow.tick([TicCmd()])
         exited = any(isinstance(e, MapExit) for e in events) or bool(flow.pending_action)
         return exited, f"activated directly ({why})"
@@ -426,14 +441,23 @@ class Playthrough:
                     self.check_hub_return(out, back[0])
                     done_clusters.add(info_a.cluster)
                     break
-        for a in self.maps:
-            info_a = self.mapinfo.get(a)
-            for out in exits.get(a, []):
-                b = self.expected_map(out) if out.special == 74 and out.line_index >= 0 else -1
-                info_b = self.mapinfo.get(b) if b > 0 else None
-                if info_a and info_b and info_b.cluster != info_a.cluster:
-                    self.check_cluster_change(out)
-                    return
+        # Prefer a static exit line that crosses clusters; if the WAD only changes
+        # clusters through ACS scripts (as Deathkings does), use a known-target script.
+        for allow_scripts in (False, True):
+            for a in self.maps:
+                info_a = self.mapinfo.get(a)
+                for out in exits.get(a, []):
+                    if out.special != 74:
+                        continue
+                    if not allow_scripts and out.line_index < 0:
+                        continue
+                    if allow_scripts and (out.script < 0 or not out.args_known):
+                        continue
+                    b = self.expected_map(out)
+                    info_b = self.mapinfo.get(b) if b > 0 else None
+                    if info_a and info_b and info_b.cluster != info_a.cluster:
+                        self.check_cluster_change(out)
+                        return
 
     def check_hub_return(self, out: ExitDef, back: ExitDef) -> Check:
         a, b = out.map_num, back.map_num
@@ -498,7 +522,10 @@ class Playthrough:
             flow = self.start(out.map_num, 0)
             assert flow.sim is not None and flow.sim.level is not None
             flow.sim.players[0].keys = ALL_KEYS
-            exited, _how = self.walk_over_line(flow, flow.sim.level.lines[out.line_index])
+            if out.line_index >= 0:
+                exited, _how = self.walk_over_line(flow, flow.sim.level.lines[out.line_index])
+            else:
+                exited, _how = self.run_exit_script(flow, out.script)
             if not exited:
                 return self.report.add(Check("hub", name, "FAIL", "could not leave"))
             self.finish_transition(flow)
@@ -600,11 +627,22 @@ class Playthrough:
         """Die after a map change and press use: the reborn slot reloads that map."""
         name = f"reborn after a map change ({CLASS_NAMES[player_class]})"
         try:
-            first = self.maps[0]
-            out = next(
-                (e for e in self.find_exits(first) if e.special == 74 and e.line_index >= 0),
-                None,
+            warp1 = self.mapinfo.translate_warp(1)
+            candidates = (
+                [warp1, *(m for m in self.maps if m != warp1)]
+                if warp1 in self.maps
+                else list(self.maps)
             )
+            first = candidates[0]
+            out: ExitDef | None = None
+            for cand in candidates:
+                out = next(
+                    (e for e in self.find_exits(cand) if e.special == 74 and e.line_index >= 0),
+                    None,
+                )
+                if out is not None:
+                    first = cand
+                    break
             if out is None:
                 return self.report.add(Check("reborn", name, "WARN", f"MAP{first:02d} has no exit"))
             flow = self.start(first, player_class)
@@ -816,6 +854,7 @@ def _acs_exits(map_num: int, behavior: Any) -> list[ExitDef]:
 def run(
     wad_path: Path,
     *,
+    pwads: Sequence[Path] = (),
     only: Sequence[str] = (),
     maps: Sequence[int] = (),
     classes: Sequence[int] = (0, 1, 2),
@@ -823,30 +862,30 @@ def run(
     render: bool = False,
     log: Callable[[str], None] = print,
 ) -> Report:
-    stack = WadStack(wad_path)
-    mapinfo = load_mapinfo(stack)
-    with tempfile.TemporaryDirectory() as tmp:
-        pt = Playthrough(stack, mapinfo, save_dir=Path(tmp), render=render)
-        selected = [m for m in pt.maps if not maps or m in maps]
-        kinds = set(only) or {"exits", "hubs", "soak", "reborn"}
-        try:
-            if "exits" in kinds:
-                log("== exits ==")
-                pt.check_exits(selected)
-            if "hubs" in kinds:
-                log("== hubs ==")
-                pt.check_hubs()
-            if "reborn" in kinds:
-                log("== reborn ==")
-                for pclass in classes:
-                    pt.check_reborn(pclass)
-            if "soak" in kinds:
-                log("== soak ==")
-                for map_num in selected:
+    with WadStack([wad_path, *pwads]) as stack:
+        mapinfo = load_mapinfo(stack)
+        with tempfile.TemporaryDirectory() as tmp:
+            pt = Playthrough(stack, mapinfo, save_dir=Path(tmp), render=render)
+            selected = [m for m in pt.maps if not maps or m in maps]
+            kinds = set(only) or {"exits", "hubs", "soak", "reborn"}
+            try:
+                if "exits" in kinds:
+                    log("== exits ==")
+                    pt.check_exits(selected)
+                if "hubs" in kinds:
+                    log("== hubs ==")
+                    pt.check_hubs()
+                if "reborn" in kinds:
+                    log("== reborn ==")
                     for pclass in classes:
-                        pt.soak(map_num, pclass, soak_tics)
-        finally:
-            pt.close()
+                        pt.check_reborn(pclass)
+                if "soak" in kinds:
+                    log("== soak ==")
+                    for map_num in selected:
+                        for pclass in classes:
+                            pt.soak(map_num, pclass, soak_tics)
+            finally:
+                pt.close()
     return pt.report
 
 
@@ -855,6 +894,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="PyHexen scripted playthrough checklist (T15.7)")
     parser.add_argument("--iwad", default=None)
+    parser.add_argument(
+        "--file",
+        type=Path,
+        action="extend",
+        nargs="+",
+        default=[],
+        help="PWAD(s) to load on top of the IWAD (e.g. HEXDD.WAD)",
+    )
     parser.add_argument("--only", default="", help="comma list: exits,hubs,soak,reborn")
     parser.add_argument("--maps", default="", help="comma list of map numbers")
     parser.add_argument("--classes", default="0,1,2", help="0=Fighter 1=Cleric 2=Mage")
@@ -868,6 +915,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     started = time.perf_counter()
     report = run(
         Path(iwad),
+        pwads=args.file,
         only=[s for s in args.only.split(",") if s],
         maps=[int(s) for s in args.maps.split(",") if s],
         classes=[int(s) for s in args.classes.split(",") if s],
